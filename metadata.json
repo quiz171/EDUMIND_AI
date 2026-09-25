@@ -1,0 +1,10 @@
+{
+  "name": "EduMind AI - Second Brain",
+  "description": "Adaptive Nigerian student AI assistant application with pre-delivery factual verification, zero-hallucination guard, exam past question photo solving, voice dictation, and RAG document grounding.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,750 @@
+@import "./tailwind.css";
+
+/* ==========================================================================
+   EDUMIND AI DESIGN SYSTEM & MASTER CSS ENGINE
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Global Fallback Tokens (Obsidian Default) */
+  --v-bg-canvas: #08080a;
+  --v-surface-sidebar: #0e0e12;
+  --v-surface-header: rgba(14, 14, 18, 0.85);
+  --v-surface-card: #131318;
+  --v-surface-elevated: #1a1a22;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(255, 255, 255, 0.07);
+  --v-border-strong: rgba(255, 255, 255, 0.14);
+  --v-border-focus: rgba(16, 185, 129, 0.5);
+  --v-text-primary: #f4f4f5;
+  --v-text-secondary: #a1a1aa;
+  --v-text-muted: #71717a;
+  --v-accent: #10b981;
+  --v-accent-subtle: rgba(16, 185, 129, 0.12);
+  --v-accent-glow: rgba(16, 185, 129, 0.25);
+  --v-user-bubble: #191a20;
+  --v-user-bubble-border: rgba(255, 255, 255, 0.1);
+  --v-ai-bubble: transparent;
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.28);
+}
+
+html, body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  background-color: var(--v-bg-canvas);
+  color: var(--v-text-primary);
+}
+
+/* Custom Text Selection */
+::selection {
+  background: var(--v-accent-glow);
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   Ultra-Sleek Scrollbars
+   ========================================================================== */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--v-scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--v-scrollbar-hover);
+}
+
+/* ==========================================================================
+   THEME PALETTES (Refined Human-Crafted Atmospheric System)
+   ========================================================================== */
+
+/* 1. Solaris (Warm Charcoal with Amber & Terracotta) */
+.theme-solaris {
+  color-scheme: dark;
+  --v-bg-canvas: #12100e;
+  --v-surface-sidebar: #181512;
+  --v-surface-header: rgba(24, 21, 18, 0.92);
+  --v-surface-card: #1f1b17;
+  --v-surface-elevated: #29241f;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(245, 158, 11, 0.12);
+  --v-border-strong: rgba(245, 158, 11, 0.28);
+  --v-border-focus: rgba(245, 158, 11, 0.7);
+  --v-text-primary: #fbfaf8;
+  --v-text-secondary: #c7c2bb;
+  --v-text-muted: #8c857b;
+  --v-accent: #f59e0b;
+  --v-accent-subtle: rgba(245, 158, 11, 0.12);
+  --v-accent-glow: rgba(245, 158, 11, 0.25);
+  --v-user-bubble: #27211b;
+  --v-user-bubble-border: rgba(245, 158, 11, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(245, 158, 11, 0.07) 0%, transparent 60%);
+}
+
+/* 2. Midnight (Deep Space Navy Charcoal & Muted Indigo) */
+.theme-midnight {
+  color-scheme: dark;
+  --v-bg-canvas: #090a12;
+  --v-surface-sidebar: #0f101c;
+  --v-surface-header: rgba(15, 16, 28, 0.92);
+  --v-surface-card: #151726;
+  --v-surface-elevated: #1e2033;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(168, 85, 247, 0.12);
+  --v-border-strong: rgba(168, 85, 247, 0.26);
+  --v-border-focus: rgba(168, 85, 247, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #a855f7;
+  --v-accent-subtle: rgba(168, 85, 247, 0.12);
+  --v-accent-glow: rgba(168, 85, 247, 0.25);
+  --v-user-bubble: #1a1c30;
+  --v-user-bubble-border: rgba(168, 85, 247, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(124, 58, 237, 0.07) 0%, transparent 60%);
+}
+
+/* 3. Cyberpunk (High-Contrast Obsidian with Precise Cyan & Fuchsia) */
+.theme-cyberpunk {
+  color-scheme: dark;
+  --v-bg-canvas: #090b10;
+  --v-surface-sidebar: #0e121a;
+  --v-surface-header: rgba(14, 18, 26, 0.92);
+  --v-surface-card: #141a24;
+  --v-surface-elevated: #1b2330;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(6, 182, 212, 0.14);
+  --v-border-strong: rgba(6, 182, 212, 0.28);
+  --v-border-focus: rgba(6, 182, 212, 0.75);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #06b6d4;
+  --v-accent-subtle: rgba(6, 182, 212, 0.12);
+  --v-accent-glow: rgba(6, 182, 212, 0.25);
+  --v-user-bubble: #192230;
+  --v-user-bubble-border: rgba(6, 182, 212, 0.2);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(6, 182, 212, 0.07) 0%, transparent 60%);
+}
+
+/* 4. Emerald & Aurora (Muted Forest Slate with Calming Jade & Mint) */
+.theme-emerald,
+.theme-aurora {
+  color-scheme: dark;
+  --v-bg-canvas: #080f0c;
+  --v-surface-sidebar: #0e1713;
+  --v-surface-header: rgba(14, 23, 19, 0.92);
+  --v-surface-card: #14211b;
+  --v-surface-elevated: #1c2e26;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(16, 185, 129, 0.12);
+  --v-border-strong: rgba(16, 185, 129, 0.26);
+  --v-border-focus: rgba(16, 185, 129, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #10b981;
+  --v-accent-subtle: rgba(16, 185, 129, 0.12);
+  --v-accent-glow: rgba(16, 185, 129, 0.25);
+  --v-user-bubble: #172921;
+  --v-user-bubble-border: rgba(16, 185, 129, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(16, 185, 129, 0.07) 0%, transparent 60%);
+}
+
+/* 5. Glacial Arctic (Sub-Zero Polar Navy with Crystalline Ice Cyan) */
+.theme-arctic {
+  color-scheme: dark;
+  --v-bg-canvas: #070d14;
+  --v-surface-sidebar: #0d1520;
+  --v-surface-header: rgba(13, 21, 32, 0.92);
+  --v-surface-card: #131e2c;
+  --v-surface-elevated: #1b293c;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(56, 189, 248, 0.12);
+  --v-border-strong: rgba(56, 189, 248, 0.26);
+  --v-border-focus: rgba(56, 189, 248, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #38bdf8;
+  --v-accent-subtle: rgba(56, 189, 248, 0.12);
+  --v-accent-glow: rgba(56, 189, 248, 0.25);
+  --v-user-bubble: #172638;
+  --v-user-bubble-border: rgba(56, 189, 248, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(56, 189, 248, 0.07) 0%, transparent 60%);
+}
+
+/* 6. Imperial Amethyst (Violet Noir with Lavender Accents) */
+.theme-amethyst {
+  color-scheme: dark;
+  --v-bg-canvas: #0d0a12;
+  --v-surface-sidebar: #14101c;
+  --v-surface-header: rgba(20, 16, 28, 0.92);
+  --v-surface-card: #1c1626;
+  --v-surface-elevated: #251e33;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(192, 132, 252, 0.12);
+  --v-border-strong: rgba(192, 132, 252, 0.26);
+  --v-border-focus: rgba(192, 132, 252, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #c084fc;
+  --v-accent-subtle: rgba(192, 132, 252, 0.12);
+  --v-accent-glow: rgba(192, 132, 252, 0.25);
+  --v-user-bubble: #221a2e;
+  --v-user-bubble-border: rgba(192, 132, 252, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(192, 132, 252, 0.07) 0%, transparent 60%);
+}
+
+/* 7. Crimson (Dark Wine Graphite with Ruby & Rose Accents) */
+.theme-crimson {
+  color-scheme: dark;
+  --v-bg-canvas: #100a0c;
+  --v-surface-sidebar: #171013;
+  --v-surface-header: rgba(23, 16, 19, 0.92);
+  --v-surface-card: #20161a;
+  --v-surface-elevated: #2b1f24;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(244, 63, 94, 0.12);
+  --v-border-strong: rgba(244, 63, 94, 0.26);
+  --v-border-focus: rgba(244, 63, 94, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #f43f5e;
+  --v-accent-subtle: rgba(244, 63, 94, 0.12);
+  --v-accent-glow: rgba(244, 63, 94, 0.25);
+  --v-user-bubble: #271b20;
+  --v-user-bubble-border: rgba(244, 63, 94, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(244, 63, 94, 0.07) 0%, transparent 60%);
+}
+
+/* 8. Abyssal Mariana (Deep Oceanic Trench with Sapphire Blue) */
+.theme-mariana {
+  color-scheme: dark;
+  --v-bg-canvas: #060b14;
+  --v-surface-sidebar: #0b1220;
+  --v-surface-header: rgba(11, 18, 32, 0.92);
+  --v-surface-card: #111a2c;
+  --v-surface-elevated: #18243c;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(59, 130, 246, 0.12);
+  --v-border-strong: rgba(59, 130, 246, 0.26);
+  --v-border-focus: rgba(59, 130, 246, 0.7);
+  --v-text-primary: #f8fafc;
+  --v-text-secondary: #cbd5e1;
+  --v-text-muted: #64748b;
+  --v-accent: #3b82f6;
+  --v-accent-subtle: rgba(59, 130, 246, 0.12);
+  --v-accent-glow: rgba(59, 130, 246, 0.25);
+  --v-user-bubble: #152036;
+  --v-user-bubble-border: rgba(59, 130, 246, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(59, 130, 246, 0.07) 0%, transparent 60%);
+}
+
+/* 9. Obsidian OLED (Pure Pitch-Black OLED with Zinc & Emerald Focus) */
+.theme-obsidian {
+  color-scheme: dark;
+  --v-bg-canvas: #050505;
+  --v-surface-sidebar: #0b0b0d;
+  --v-surface-header: rgba(11, 11, 13, 0.94);
+  --v-surface-card: #121214;
+  --v-surface-elevated: #1a1a1e;
+  --v-surface-input: rgba(255, 255, 255, 0.035);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(255, 255, 255, 0.08);
+  --v-border-strong: rgba(255, 255, 255, 0.16);
+  --v-border-focus: rgba(16, 185, 129, 0.65);
+  --v-text-primary: #f4f4f5;
+  --v-text-secondary: #a1a1aa;
+  --v-text-muted: #71717a;
+  --v-accent: #10b981;
+  --v-accent-subtle: rgba(16, 185, 129, 0.12);
+  --v-accent-glow: rgba(16, 185, 129, 0.25);
+  --v-user-bubble: #16161a;
+  --v-user-bubble-border: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.2);
+
+  background-color: var(--v-bg-canvas);
+}
+
+/* 10. Slate Grid (Architectural Gunmetal Dark with Neutral Borders) */
+.theme-slate {
+  color-scheme: dark;
+  --v-bg-canvas: #0a0e14;
+  --v-surface-sidebar: #0f151e;
+  --v-surface-header: rgba(15, 21, 30, 0.92);
+  --v-surface-card: #151d29;
+  --v-surface-elevated: #1d2737;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(148, 163, 184, 0.12);
+  --v-border-strong: rgba(148, 163, 184, 0.22);
+  --v-border-focus: rgba(56, 189, 248, 0.65);
+  --v-text-primary: #f1f5f9;
+  --v-text-secondary: #94a3b8;
+  --v-text-muted: #64748b;
+  --v-accent: #38bdf8;
+  --v-accent-subtle: rgba(56, 189, 248, 0.12);
+  --v-accent-glow: rgba(56, 189, 248, 0.25);
+  --v-user-bubble: #192332;
+  --v-user-bubble-border: rgba(148, 163, 184, 0.16);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(56, 189, 248, 0.06) 0%, transparent 60%);
+}
+
+/* 11. Kyoto Espresso (Roasted Cocoa Dark with Warm Candlelight Bronze) */
+.theme-espresso {
+  color-scheme: dark;
+  --v-bg-canvas: #0f0c0a;
+  --v-surface-sidebar: #171310;
+  --v-surface-header: rgba(23, 19, 16, 0.92);
+  --v-surface-card: #201a16;
+  --v-surface-elevated: #2b231e;
+  --v-surface-input: rgba(255, 255, 255, 0.04);
+  --v-surface-hover: rgba(255, 255, 255, 0.06);
+  --v-border-subtle: rgba(217, 119, 6, 0.12);
+  --v-border-strong: rgba(217, 119, 6, 0.24);
+  --v-border-focus: rgba(217, 119, 6, 0.65);
+  --v-text-primary: #faf8f5;
+  --v-text-secondary: #c2bbb2;
+  --v-text-muted: #857e75;
+  --v-accent: #d97706;
+  --v-accent-subtle: rgba(217, 119, 6, 0.12);
+  --v-accent-glow: rgba(217, 119, 6, 0.25);
+  --v-user-bubble: #28201b;
+  --v-user-bubble-border: rgba(217, 119, 6, 0.18);
+  --v-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --v-scrollbar-hover: rgba(255, 255, 255, 0.25);
+
+  background-color: var(--v-bg-canvas);
+  background-image: radial-gradient(ellipse 90% 45% at 50% -5%, rgba(217, 119, 6, 0.06) 0%, transparent 60%);
+}
+
+/* 12. Oxford Classical Parchment (Ivory Paper & British Racing Green) */
+.theme-oxford {
+  color-scheme: light;
+  --v-bg-canvas: #f8f6f0;
+  --v-surface-sidebar: #f0ece2;
+  --v-surface-header: rgba(248, 246, 240, 0.95);
+  --v-surface-card: #ffffff;
+  --v-surface-elevated: #ffffff;
+  --v-surface-input: rgba(28, 25, 23, 0.04);
+  --v-surface-hover: rgba(4, 120, 87, 0.05);
+  --v-border-subtle: rgba(28, 25, 23, 0.08);
+  --v-border-strong: rgba(4, 120, 87, 0.24);
+  --v-border-focus: rgba(4, 120, 87, 0.6);
+  --v-text-primary: #1c1917;
+  --v-text-secondary: #44403c;
+  --v-text-muted: #78716c;
+  --v-accent: #047857;
+  --v-accent-subtle: rgba(4, 120, 87, 0.1);
+  --v-accent-glow: rgba(4, 120, 87, 0.18);
+  --v-user-bubble: #ebe5d8;
+  --v-user-bubble-border: rgba(4, 120, 87, 0.16);
+  --v-scrollbar-thumb: rgba(28, 25, 23, 0.16);
+  --v-scrollbar-hover: rgba(4, 120, 87, 0.3);
+
+  background-color: var(--v-bg-canvas);
+  color: var(--v-text-primary);
+}
+
+/* 13. Studio Light (Porcelain Minimal with Royal Cobalt) */
+.theme-porcelain {
+  color-scheme: light;
+  --v-bg-canvas: #f8fafc;
+  --v-surface-sidebar: #f1f5f9;
+  --v-surface-header: rgba(248, 250, 252, 0.95);
+  --v-surface-card: #ffffff;
+  --v-surface-elevated: #ffffff;
+  --v-surface-input: rgba(15, 23, 42, 0.03);
+  --v-surface-hover: rgba(15, 23, 42, 0.05);
+  --v-border-subtle: rgba(15, 23, 42, 0.08);
+  --v-border-strong: rgba(37, 99, 235, 0.2);
+  --v-border-focus: rgba(37, 99, 235, 0.6);
+  --v-text-primary: #0f172a;
+  --v-text-secondary: #334155;
+  --v-text-muted: #64748b;
+  --v-accent: #2563eb;
+  --v-accent-subtle: rgba(37, 99, 235, 0.1);
+  --v-accent-glow: rgba(37, 99, 235, 0.2);
+  --v-user-bubble: #e2e8f0;
+  --v-user-bubble-border: rgba(15, 23, 42, 0.1);
+  --v-scrollbar-thumb: rgba(15, 23, 42, 0.16);
+  --v-scrollbar-hover: rgba(15, 23, 42, 0.3);
+
+  background-color: var(--v-bg-canvas);
+  color: var(--v-text-primary);
+}
+
+/* ==========================================================================
+   Structural Theme Integrations & Smart Cascade
+   ========================================================================== */
+
+/* Universal theme container bindings */
+[class*="theme-"] {
+  background-color: var(--v-bg-canvas);
+  color: var(--v-text-primary);
+}
+
+/* Sidebar surface within any active theme */
+[class*="theme-"] aside {
+  background-color: var(--v-surface-sidebar) !important;
+  border-color: var(--v-border-subtle) !important;
+}
+
+/* Header surface within any active theme */
+[class*="theme-"] header {
+  background-color: var(--v-surface-header) !important;
+  border-color: var(--v-border-subtle) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Universal Panel / Card Styling */
+.glass-panel,
+.vortex-card {
+  background-color: var(--v-surface-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--v-border-subtle);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.07), 0 8px 32px -4px rgba(0, 0, 0, 0.4);
+}
+
+.theme-porcelain .glass-panel,
+.theme-porcelain .vortex-card {
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.8), 0 4px 20px -2px rgba(15, 23, 42, 0.08);
+}
+
+/* Universal Input Box Styling */
+.glass-input,
+.vortex-input {
+  background-color: var(--v-surface-input);
+  border: 1px solid var(--v-border-subtle);
+  color: var(--v-text-primary);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.glass-input:focus,
+.glass-input:focus-within,
+.vortex-input:focus,
+.vortex-input:focus-within {
+  background-color: var(--v-surface-elevated);
+  border-color: var(--v-border-focus);
+  box-shadow: 0 0 0 1px var(--v-accent), 0 0 16px var(--v-accent-glow);
+}
+
+/* User message bubble across all themes */
+[class*="theme-"] .bg-\[\#2f2f2f\],
+[class*="theme-"] .bg-\[\#2a2a2a\] {
+  background-color: var(--v-user-bubble) !important;
+  border-color: var(--v-user-bubble-border) !important;
+  color: var(--v-text-primary) !important;
+}
+
+/* AI response cards across all themes */
+[class*="theme-"] .bg-\[\#181818\] {
+  background-color: var(--v-surface-card) !important;
+  border-color: var(--v-border-subtle) !important;
+  color: var(--v-text-primary) !important;
+}
+
+/* Chat Input Bar across all themes */
+[class*="theme-"] footer form {
+  background-color: var(--v-surface-card) !important;
+  border-color: var(--v-border-subtle) !important;
+}
+
+[class*="theme-"] footer form:focus-within {
+  border-color: var(--v-border-focus) !important;
+  box-shadow: 0 0 0 1px var(--v-accent), 0 0 16px var(--v-accent-glow) !important;
+}
+
+/* Textarea color integration across dark and light themes */
+[class*="theme-"] textarea {
+  color: var(--v-text-primary) !important;
+}
+
+[class*="theme-"] textarea::placeholder {
+  color: var(--v-text-muted) !important;
+}
+
+/* ==========================================================================
+   Light Themes (Porcelain & Oxford Parchment) Structural Overrides
+   ========================================================================== */
+.theme-porcelain .bg-\[\#0a0a0a\],
+.theme-porcelain .bg-\[\#0c0c0c\],
+.theme-porcelain .bg-\[\#121212\],
+.theme-porcelain .bg-\[\#141414\],
+.theme-oxford .bg-\[\#0a0a0a\],
+.theme-oxford .bg-\[\#0c0c0c\],
+.theme-oxford .bg-\[\#121212\],
+.theme-oxford .bg-\[\#141414\] {
+  background-color: var(--v-surface-sidebar) !important;
+  color: var(--v-text-primary) !important;
+}
+
+.theme-porcelain .bg-\[\#161616\],
+.theme-porcelain .bg-\[\#181818\],
+.theme-porcelain .bg-\[\#1a1a1a\],
+.theme-porcelain .bg-\[\#1c1c1c\],
+.theme-porcelain .bg-\[\#202020\],
+.theme-porcelain .bg-stone-900,
+.theme-oxford .bg-\[\#161616\],
+.theme-oxford .bg-\[\#181818\],
+.theme-oxford .bg-\[\#1a1a1a\],
+.theme-oxford .bg-\[\#1c1c1c\],
+.theme-oxford .bg-\[\#202020\],
+.theme-oxford .bg-stone-900 {
+  background-color: #ffffff !important;
+  color: var(--v-text-primary) !important;
+}
+
+.theme-porcelain .border-white\/5,
+.theme-porcelain .border-white\/10,
+.theme-porcelain .border-white\/15,
+.theme-porcelain .border-white\/20,
+.theme-oxford .border-white\/5,
+.theme-oxford .border-white\/10,
+.theme-oxford .border-white\/15,
+.theme-oxford .border-white\/20 {
+  border-color: var(--v-border-subtle) !important;
+}
+
+.theme-porcelain .text-white,
+.theme-porcelain .text-stone-100,
+.theme-porcelain .text-stone-200,
+.theme-porcelain .text-stone-300,
+.theme-oxford .text-white,
+.theme-oxford .text-stone-100,
+.theme-oxford .text-stone-200,
+.theme-oxford .text-stone-300 {
+  color: var(--v-text-primary) !important;
+}
+
+.theme-porcelain .text-stone-400,
+.theme-porcelain .text-stone-500,
+.theme-oxford .text-stone-400,
+.theme-oxford .text-stone-500 {
+  color: var(--v-text-muted) !important;
+}
+
+.theme-porcelain .bg-white\/5,
+.theme-porcelain .bg-white\/10,
+.theme-oxford .bg-white\/5,
+.theme-oxford .bg-white\/10 {
+  background-color: var(--v-surface-hover) !important;
+}
+
+/* ==========================================================================
+   Micro-Animations & Smooth Polish
+   ========================================================================== */
+@keyframes ambient-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-ambient-float {
+  animation: ambient-float 4s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2.5s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Academic Markdown & KaTeX Math Polish
+   ========================================================================== */
+.prose-academic {
+  line-height: 1.65;
+  letter-spacing: -0.01em;
+}
+
+.prose-academic h1,
+.prose-academic h2,
+.prose-academic h3,
+.prose-academic h4 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--v-text-primary);
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+}
+
+.prose-academic p {
+  margin-bottom: 0.85em;
+}
+
+.prose-academic pre {
+  background-color: #0d0d12 !important;
+  border: 1px solid var(--v-border-subtle);
+  border-radius: 12px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.theme-porcelain .prose-academic pre {
+  background-color: #f1f5f9 !important;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a !important;
+}
+
+.prose-academic code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--v-accent);
+}
+
+.theme-porcelain .prose-academic code {
+  background-color: rgba(15, 23, 42, 0.07);
+  color: #059669;
+}
+
+.prose-academic blockquote {
+  border-left: 3px solid var(--v-accent);
+  padding-left: 14px;
+  margin-left: 0;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-style: normal;
+  color: var(--v-text-secondary);
+}
+
+.prose-academic table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--v-border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1em 0;
+}
+
+.prose-academic th {
+  background-color: var(--v-surface-hover);
+  padding: 8px 12px;
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid var(--v-border-subtle);
+}
+
+.prose-academic td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--v-border-subtle);
+}
+
+.prose-academic tr:last-child td {
+  border-bottom: none;
+}
+
+/* KaTeX equations formatting */
+.katex-display {
+  margin: 0.75em 0 !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+/* ==========================================================================
+   OTP Input Animations & Visual States
+   ========================================================================== */
+@keyframes otp-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+@keyframes otp-success-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+.animate-otp-shake {
+  animation: otp-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.animate-otp-success {
+  animation: otp-success-pulse 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
