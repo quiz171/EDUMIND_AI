@@ -30,7 +30,7 @@ const BLOCKED_EXTENSIONS = [".exe", ".sh", ".bat", ".bin", ".cmd", ".vbs", ".msi
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // High-performance gzip/deflate compression for static assets and API payloads
   app.use(compression());

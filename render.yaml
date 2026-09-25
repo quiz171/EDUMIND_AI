@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: edumind-ai
+    runtime: node
+    buildCommand: bun install && bun run build
+    startCommand: bun run start
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
