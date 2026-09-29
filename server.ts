@@ -112,6 +112,7 @@ async function startServer() {
           styleSrc: [
             "'self'",
             "'unsafe-inline'",
+            "https://accounts.google.com",
             "https://fonts.googleapis.com",
             "https://cdn.jsdelivr.net",
           ],
