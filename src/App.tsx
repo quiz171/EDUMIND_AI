@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import LandingPage from './app/landing-page/page';
 import SignUpLoginPage from './app/sign-up-login-screen/page';
 import ChatAppPage from './app/chat-app/page';
+import { OfflineIndicator } from './components/pwa/OfflineIndicator';
 
 const getInitialRoute = (): string => {
   if (typeof window !== 'undefined' && window.location.hash) {
@@ -27,7 +28,7 @@ export default function App() {
         setCurrentRoute('/landing-page');
       } else if (hash === 'auth' || hash === 'sign-up-login-screen' || hash === 'login') {
         setCurrentRoute('/sign-up-login-screen');
-      } else if (hash === 'chat' || hash === 'chat-app' || hash === 'admin' || hash === 'admin-dashboard') {
+      } else if (hash === 'chat' || hash === 'chat-app') {
         setCurrentRoute('/chat-app');
       }
     };
@@ -42,12 +43,6 @@ export default function App() {
       localStorage.setItem('vortex_auth_mode', 'login');
       window.location.hash = 'login';
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    if (route.includes('admin')) {
-      setCurrentRoute('/chat-app');
-      window.location.hash = 'chat';
       return;
     }
 
@@ -75,6 +70,9 @@ export default function App() {
       ) : (
         <LandingPage onNavigate={handleNavigate} />
       )}
+
+      {/* Global Connectivity Indicator */}
+      <OfflineIndicator />
     </div>
   );
 }

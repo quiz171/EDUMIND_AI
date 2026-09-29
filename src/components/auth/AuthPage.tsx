@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, ArrowRight, Lock, Mail, User as UserIcon, BookOpen, GraduationCap, AlertCircle, X, Check, ShieldCheck, RefreshCw, ArrowLeft, KeyRound, CheckCircle2, Compass, Briefcase } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Sparkles, ArrowRight, Lock, Mail, User as UserIcon, BookOpen, GraduationCap, AlertCircle, X, Check, ShieldCheck, RefreshCw, ArrowLeft, KeyRound, CheckCircle2, Compass, Briefcase, Eye, EyeOff } from 'lucide-react';
 import { User } from '../../types';
 import { OtpInput, OtpVerificationStatus } from './OtpInput';
 import { BackgroundWatermark } from '../chat/BackgroundWatermark';
@@ -35,11 +35,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [otpSuccessMsg, setOtpSuccessMsg] = useState<string | null>(null);
   const [otpErrorMsg, setOtpErrorMsg] = useState<string | null>(null);
 
-  // In-app Google Sign-In modal state (resolves iframe popups and redirect_uri_mismatch)
+  // Google Identity Services (GSI) Verified Authentication State
   const [showGoogleModal, setShowGoogleModal] = useState(false);
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
-  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
+  const [googleClientId, setGoogleClientId] = useState<string>('');
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+  const modalGoogleBtnRef = useRef<HTMLDivElement>(null);
+
+  // Forgot Password Flow State
+  const [forgotStep, setForgotStep] = useState<'none' | 'request' | 'verify' | 'success'>('none');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotErrorMsg, setForgotErrorMsg] = useState<string | null>(null);
+  const [forgotSuccessMsg, setForgotSuccessMsg] = useState<string | null>(null);
+  const [forgotPreviewCode, setForgotPreviewCode] = useState<string | null>(null);
+  const [forgotResendTimer, setForgotResendTimer] = useState(30);
+  const [forgotResending, setForgotResending] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Countdown timer for OTP resend
   useEffect(() => {
@@ -50,6 +67,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       return () => clearTimeout(timer);
     }
   }, [otpStep, otpResendTimer]);
+
+  // Countdown timer for Forgot Password resend
+  useEffect(() => {
+    if (forgotStep === 'verify' && forgotResendTimer > 0) {
+      const timer = setTimeout(() => {
+        setForgotResendTimer((prev) => prev - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [forgotStep, forgotResendTimer]);
 
   // Sync tab with route hash or localStorage
   useEffect(() => {
@@ -156,26 +183,104 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
     }
   };
 
-  // Direct, rock-solid Google Authentication (no redirect_uri_mismatch or blocked popups)
-  const executeGoogleLogin = async (targetEmail: string, targetName?: string) => {
+  // Fetch Google Client ID and initialize Google Identity Services SDK
+  const initGsi = useCallback(() => {
+    if (!googleClientId || !(window as any).google?.accounts?.id) return;
+
+    try {
+      (window as any).google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: (response: { credential: string }) => {
+          if (response && response.credential) {
+            executeGoogleLogin(response.credential);
+          }
+        },
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      });
+
+      if (googleBtnRef.current) {
+        googleBtnRef.current.innerHTML = '';
+        (window as any).google.accounts.id.renderButton(googleBtnRef.current, {
+          theme: 'filled_black',
+          size: 'large',
+          shape: 'pill',
+          text: tab === 'signup' ? 'signup_with' : 'signin_with',
+          width: 320,
+        });
+      }
+
+      if (modalGoogleBtnRef.current) {
+        modalGoogleBtnRef.current.innerHTML = '';
+        (window as any).google.accounts.id.renderButton(modalGoogleBtnRef.current, {
+          theme: 'outline',
+          size: 'large',
+          shape: 'pill',
+          text: 'continue_with',
+          width: 320,
+        });
+      }
+    } catch (e) {
+      console.warn('Google Identity Services init notice:', e);
+    }
+  }, [googleClientId, tab]);
+
+  useEffect(() => {
+    // 1. Check Vite env var
+    const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
+    if (envClientId) {
+      setGoogleClientId(envClientId);
+    }
+    // 2. Fetch from server endpoint
+    fetch('/api/auth/google/client-id')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.clientId) {
+          setGoogleClientId(data.clientId);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!googleClientId) return;
+    if ((window as any).google?.accounts?.id) {
+      initGsi();
+    } else {
+      const timer = setInterval(() => {
+        if ((window as any).google?.accounts?.id) {
+          clearInterval(timer);
+          initGsi();
+        }
+      }, 300);
+      return () => clearInterval(timer);
+    }
+  }, [googleClientId, initGsi]);
+
+  // Authenticate with Google ID Token Credential
+  const executeGoogleLogin = async (credential: string) => {
     setErrorMsg(null);
     setGoogleAuthError(null);
     setGoogleAuthLoading(true);
     setLoading(true);
 
     try {
-      const cleanEmail = targetEmail.trim().toLowerCase();
-      const cleanName = targetName?.trim() || cleanEmail.split('@')[0].replace(/[._]/g, ' ');
+      const isOthers = educationLevel === 'General' || educationLevel === 'Others';
+      const resolvedLevel = isOthers ? 'General' : (educationLevel || 'University');
+      const resolvedClass = isOthers ? 'General' : (classYear || '100L');
+      const resolvedCourse = isOthers ? 'General Public' : (course || 'Computer Science');
+      const resolvedUserType = isOthers ? 'others' : (tab === 'signup' ? 'student' : undefined);
 
       const res = await fetch('/api/auth/google', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: cleanEmail,
-          name: cleanName,
-          educationLevel: educationLevel || 'University',
-          classYear: classYear || '100L',
-          course: course || 'Computer Science',
+          credential,
+          educationLevel: resolvedLevel,
+          classYear: resolvedClass,
+          course: resolvedCourse,
+          userType: resolvedUserType,
         }),
       });
 
@@ -347,6 +452,27 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
 
   const handleGoogleSignIn = () => {
     setErrorMsg(null);
+    setGoogleAuthError(null);
+
+    if (googleClientId && (window as any).google?.accounts?.id) {
+      try {
+        (window as any).google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: (response: { credential: string }) => {
+            if (response && response.credential) {
+              executeGoogleLogin(response.credential);
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+        (window as any).google.accounts.id.prompt();
+        return;
+      } catch (e) {
+        console.warn('GSI prompt notice:', e);
+      }
+    }
+
     setShowGoogleModal(true);
   };
 
@@ -418,6 +544,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
     try {
       const res = await fetch('/api/auth/verify-otp', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: otpEmail,
@@ -503,6 +630,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
     try {
       const res = await fetch('/api/login', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: loginEmail,
@@ -526,6 +654,117 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       setErrorMsg(err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Request 6-digit Password Reset Code
+  const handleRequestPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail.trim()) {
+      setForgotErrorMsg('Please enter your registered email address');
+      return;
+    }
+
+    setForgotLoading(true);
+    setForgotErrorMsg(null);
+    setForgotSuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to send reset code');
+      }
+
+      setForgotPreviewCode(data.previewOtp || null);
+      setForgotSuccessMsg(data.message || 'Verification code sent to your email');
+      setForgotResendTimer(30);
+      setForgotStep('verify');
+    } catch (err: any) {
+      setForgotErrorMsg(err.message || 'Failed to send reset code');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  // Resend Password Reset Code
+  const handleResendResetCode = async () => {
+    if (forgotResendTimer > 0 || forgotResending) return;
+    setForgotResending(true);
+    setForgotErrorMsg(null);
+
+    try {
+      const res = await fetch('/api/auth/resend-reset-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to resend reset code');
+      }
+
+      setForgotPreviewCode(data.previewOtp || null);
+      setForgotSuccessMsg('A fresh 6-digit reset code has been sent');
+      setForgotResendTimer(30);
+    } catch (err: any) {
+      setForgotErrorMsg(err.message || 'Failed to resend code');
+    } finally {
+      setForgotResending(false);
+    }
+  };
+
+  // Complete Password Reset
+  const handleCompletePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = forgotCode.trim();
+    if (!cleanCode || cleanCode.length !== 6) {
+      setForgotErrorMsg('Please enter the 6-digit verification code');
+      return;
+    }
+
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setForgotErrorMsg('New password must be at least 6 characters long');
+      return;
+    }
+
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotErrorMsg('Passwords do not match. Please verify both fields.');
+      return;
+    }
+
+    setForgotLoading(true);
+    setForgotErrorMsg(null);
+
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: forgotEmail.trim(),
+          code: cleanCode,
+          newPassword: forgotNewPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to reset password');
+      }
+
+      setForgotStep('success');
+      setLoginEmail(forgotEmail.trim());
+      setLoginPassword('');
+    } catch (err: any) {
+      setForgotErrorMsg(err.message || 'Failed to reset password');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -565,7 +804,396 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
 
       {/* Glassmorphism Dark Modal */}
       <div className="glass-panel w-full max-w-md p-6 md:p-8 rounded-3xl relative z-10 shadow-2xl">
-        {otpStep ? (
+        {forgotStep !== 'none' ? (
+          /* Human-Crafted Forgot Password Flow */
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            {/* Step Progress Tracker */}
+            <div className="flex items-center justify-between px-2 pt-1 pb-2 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                  forgotStep === 'request'
+                    ? 'bg-emerald-400 text-black'
+                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                }`}>
+                  {forgotStep === 'request' ? '1' : '✓'}
+                </span>
+                <span className={`text-xs ${forgotStep === 'request' ? 'font-bold text-white' : 'text-stone-400'}`}>
+                  Account Email
+                </span>
+              </div>
+
+              <div className="h-[1px] w-6 bg-white/10" />
+
+              <div className="flex items-center gap-2">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                  forgotStep === 'verify'
+                    ? 'bg-emerald-400 text-black'
+                    : forgotStep === 'success'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-white/5 text-stone-500 border border-white/10'
+                }`}>
+                  {forgotStep === 'success' ? '✓' : '2'}
+                </span>
+                <span className={`text-xs ${forgotStep === 'verify' ? 'font-bold text-white' : 'text-stone-400'}`}>
+                  Reset Password
+                </span>
+              </div>
+
+              <div className="h-[1px] w-6 bg-white/10" />
+
+              <div className="flex items-center gap-2">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                  forgotStep === 'success'
+                    ? 'bg-emerald-400 text-black'
+                    : 'bg-white/5 text-stone-500 border border-white/10'
+                }`}>
+                  3
+                </span>
+                <span className={`text-xs ${forgotStep === 'success' ? 'font-bold text-white' : 'text-stone-400'}`}>
+                  Done
+                </span>
+              </div>
+            </div>
+
+            {/* STEP 1: Enter Account Email */}
+            {forgotStep === 'request' && (
+              <div className="space-y-5">
+                <div className="text-left space-y-1.5">
+                  <h2 className="text-xl font-bold text-white tracking-tight">Trouble signing in?</h2>
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    It happens to everyone. Tell us the email address linked to your EduMind AI account, and we'll send you a 6-digit confirmation code.
+                  </p>
+                </div>
+
+                {forgotErrorMsg && (
+                  <div className="p-3 bg-rose-950/60 border border-rose-800/60 rounded-2xl text-xs text-rose-300 flex items-center gap-2.5 animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{forgotErrorMsg}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleRequestPasswordReset} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-stone-300">
+                      Your Registered Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-stone-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        required
+                        autoFocus
+                        value={forgotEmail}
+                        onChange={(e) => {
+                          setForgotEmail(e.target.value);
+                          if (forgotErrorMsg) setForgotErrorMsg(null);
+                        }}
+                        placeholder="e.g. nelson@example.com"
+                        className="w-full pl-10 pr-4 py-3 rounded-2xl glass-input text-sm text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                      />
+                    </div>
+                    <p className="text-[11px] text-stone-500">
+                      We'll verify your account exists before generating a security code.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={forgotLoading || !forgotEmail.trim()}
+                    className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 active:scale-98 text-black font-black text-sm transition-all shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {forgotLoading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                        <span>Finding account & sending code...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <span>Continue & Send Code</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  <div className="text-center pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotStep('none');
+                        setForgotErrorMsg(null);
+                        setForgotSuccessMsg(null);
+                      }}
+                      className="text-xs text-stone-400 hover:text-white transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Remembered your password? Back to Sign In</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* STEP 2: Verify Code & Set New Password */}
+            {forgotStep === 'verify' && (
+              <div className="space-y-5">
+                <div className="text-left space-y-1">
+                  <h2 className="text-xl font-bold text-white tracking-tight">Create a new password</h2>
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    We sent a 6-digit confirmation code to{' '}
+                    <span className="font-semibold text-emerald-300">{forgotEmail}</span>.{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotStep('request');
+                        setForgotErrorMsg(null);
+                      }}
+                      className="text-stone-400 hover:text-white underline cursor-pointer"
+                    >
+                      Change email
+                    </button>
+                  </p>
+                </div>
+
+                {/* Instant Dev Helper preview */}
+                {forgotPreviewCode && (
+                  <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 text-emerald-300">
+                      <KeyRound className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>
+                        Security Code: <strong className="font-mono text-sm tracking-wider text-white">{forgotPreviewCode}</strong>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotCode(forgotPreviewCode);
+                        setForgotErrorMsg(null);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[11px] transition-colors cursor-pointer shrink-0"
+                    >
+                      ⚡ Autofill Code
+                    </button>
+                  </div>
+                )}
+
+                {forgotSuccessMsg && (
+                  <div className="p-3 bg-emerald-950/50 border border-emerald-600/50 rounded-2xl text-xs text-emerald-300 flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                    <span>{forgotSuccessMsg}</span>
+                  </div>
+                )}
+
+                {forgotErrorMsg && (
+                  <div className="p-3 bg-rose-950/60 border border-rose-800/60 rounded-2xl text-xs text-rose-300 flex items-center gap-2 animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{forgotErrorMsg}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleCompletePasswordReset} className="space-y-4">
+                  {/* 6-Digit Code */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-stone-300 text-center">
+                      Enter 6-Digit Security Code
+                    </label>
+                    <OtpInput
+                      id="forgot-otp"
+                      length={6}
+                      value={forgotCode}
+                      onChange={(code) => {
+                        setForgotCode(code);
+                        setForgotErrorMsg(null);
+                      }}
+                      autoFocus={true}
+                    />
+                  </div>
+
+                  {/* New Password with Eye Toggle */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-stone-300">
+                      Choose New Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-stone-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        required
+                        value={forgotNewPassword}
+                        onChange={(e) => {
+                          setForgotNewPassword(e.target.value);
+                          if (forgotErrorMsg) setForgotErrorMsg(null);
+                        }}
+                        placeholder="At least 6 characters"
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl glass-input text-sm text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="p-1.5 text-stone-500 hover:text-stone-300 absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer transition-colors"
+                        title={showNewPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+
+                    {/* Human Password Strength Meter */}
+                    {forgotNewPassword.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-stone-400">Password strength:</span>
+                          <span className={`font-semibold ${
+                            forgotNewPassword.length >= 8 && /[0-9]/.test(forgotNewPassword)
+                              ? 'text-emerald-400'
+                              : forgotNewPassword.length >= 6
+                              ? 'text-amber-400'
+                              : 'text-rose-400'
+                          }`}>
+                            {forgotNewPassword.length < 6
+                              ? 'Too short (min. 6)'
+                              : forgotNewPassword.length >= 8 && /[0-9]/.test(forgotNewPassword)
+                              ? 'Strong'
+                              : 'Good'}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-stone-800 rounded-full overflow-hidden flex gap-1">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              forgotNewPassword.length >= 6 ? 'bg-amber-400 w-1/2' : 'bg-rose-500 w-1/4'
+                            } ${forgotNewPassword.length >= 8 && /[0-9]/.test(forgotNewPassword) ? 'bg-emerald-400 !w-full' : ''}`}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Confirm Password with Eye Toggle */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-stone-300">
+                        Confirm New Password
+                      </label>
+                      {forgotConfirmPassword.length > 0 && (
+                        <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                          forgotNewPassword === forgotConfirmPassword ? 'text-emerald-400' : 'text-rose-400'
+                        }`}>
+                          {forgotNewPassword === forgotConfirmPassword ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Passwords match</span>
+                            </>
+                          ) : (
+                            <span>Does not match yet</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-stone-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        required
+                        value={forgotConfirmPassword}
+                        onChange={(e) => {
+                          setForgotConfirmPassword(e.target.value);
+                          if (forgotErrorMsg) setForgotErrorMsg(null);
+                        }}
+                        placeholder="Re-enter your new password"
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl glass-input text-sm text-white placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="p-1.5 text-stone-500 hover:text-stone-300 absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer transition-colors"
+                        title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={
+                      forgotLoading ||
+                      forgotCode.trim().length !== 6 ||
+                      forgotNewPassword.length < 6 ||
+                      forgotNewPassword !== forgotConfirmPassword
+                    }
+                    className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 active:scale-98 text-black font-black text-sm transition-all shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed mt-2"
+                  >
+                    {forgotLoading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                        <span>Updating your password...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <span>Save New Password & Continue</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  <div className="flex items-center justify-between pt-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleResendResetCode}
+                      disabled={forgotResendTimer > 0 || forgotResending}
+                      className="text-stone-400 hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${forgotResending ? 'animate-spin' : ''}`} />
+                      <span>
+                        {forgotResendTimer > 0
+                          ? `Resend code in ${forgotResendTimer}s`
+                          : 'Resend code'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotStep('none');
+                        setForgotErrorMsg(null);
+                        setForgotSuccessMsg(null);
+                      }}
+                      className="text-stone-400 hover:text-white transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* STEP 3: Success Confirmation */}
+            {forgotStep === 'success' && (
+              <div className="text-center space-y-5 py-4 animate-in fade-in duration-200">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/20">
+                  <CheckCircle2 className="w-9 h-9" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-xl font-bold text-white tracking-tight">You're all set!</h2>
+                  <p className="text-xs text-stone-300 leading-relaxed max-w-xs mx-auto">
+                    Your password has been securely updated. You can now sign in to your EduMind AI account right away.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotStep('none');
+                    setTab('login');
+                    setForgotErrorMsg(null);
+                    setForgotSuccessMsg(null);
+                  }}
+                  className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 active:scale-98 text-black font-black text-sm transition-all shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Sign In with New Password</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        ) : otpStep ? (
           /* OTP 6-Digit Email Verification Screen */
           <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             {/* Back to registration link */}
@@ -712,34 +1340,40 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
           </button>
         </div>
 
-        {/* Standard Google Sign-In Button */}
-        <button
-          type="button"
-          onClick={() => handleGoogleSignIn()}
-          disabled={loading}
-          className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-stone-100 active:bg-stone-200 text-stone-900 font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-md active:scale-98 cursor-pointer disabled:opacity-50 border border-stone-200"
-          title="Continue with your Google Account"
-        >
-          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-            <path
-              fill="#4285F4"
-              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-            />
-          </svg>
-          <span>{tab === 'signup' ? 'Sign up with Google' : 'Sign in with Google'}</span>
-        </button>
+        {/* Google Sign-In Container */}
+        {googleClientId ? (
+          <div className="flex justify-center w-full min-h-[44px]">
+            <div ref={googleBtnRef} className="w-full flex justify-center" />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handleGoogleSignIn()}
+            disabled={loading}
+            className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-stone-100 active:bg-stone-200 text-stone-900 font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-md active:scale-98 cursor-pointer disabled:opacity-50 border border-stone-200"
+            title="Continue with your Google Account"
+          >
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+              />
+            </svg>
+            <span>{tab === 'signup' ? 'Sign up with Google' : 'Sign in with Google'}</span>
+          </button>
+        )}
 
         {/* Or continue with email divider */}
         <div className="flex items-center gap-3 my-4">
@@ -854,9 +1488,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-stone-300 mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-stone-300">
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotStep('request');
+                    setForgotEmail(loginEmail || '');
+                    setForgotErrorMsg(null);
+                    setForgotSuccessMsg(null);
+                  }}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 hover:underline transition-colors cursor-pointer"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-stone-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
@@ -1197,45 +1845,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
               </div>
             )}
 
-            {/* Google Email Sign-In Form */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (customGoogleEmail.trim()) {
-                  executeGoogleLogin(customGoogleEmail);
-                }
-              }}
-              className="space-y-3.5 my-4"
-            >
-              <div>
-                <label className="block text-xs font-medium text-[#9aa0a6] mb-1.5">
-                  Enter your Google Account email
-                </label>
-                <input
-                  type="email"
-                  required
-                  autoFocus
-                  value={customGoogleEmail}
-                  onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                  placeholder="student@gmail.com"
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl border border-[#5f6368] focus:border-[#8ab4f8] bg-[#171717] text-white outline-none transition-colors"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={googleAuthLoading || !customGoogleEmail.trim()}
-                className="w-full py-2.5 bg-[#1a73e8] hover:bg-[#1557b0] text-white text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {googleAuthLoading ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Signing in...</span>
-                  </>
-                ) : (
-                  <span>Continue with Google</span>
-                )}
-              </button>
-            </form>
+            {/* Google Identity Modal Content */}
+            <div className="space-y-4 my-4">
+              {googleClientId ? (
+                <div className="flex flex-col items-center gap-3 py-2">
+                  <div ref={modalGoogleBtnRef} className="w-full flex justify-center" />
+                  <p className="text-xs text-[#9aa0a6] text-center">
+                    Click the official Google button above to authenticate with your verified Google Account.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-800/50 text-xs text-amber-200 space-y-2.5">
+                  <div className="flex items-center gap-2 font-semibold text-amber-300">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Google Client ID Configuration Required</span>
+                  </div>
+                  <p className="leading-relaxed">
+                    To enable Google Sign-In, configure your <code className="px-1.5 py-0.5 rounded bg-black/40 font-mono text-amber-200">GOOGLE_CLIENT_ID</code> in your server environment variables.
+                  </p>
+                  <p className="text-[11px] text-stone-400">
+                    Once set, Google Identity Services will cryptographically verify and issue authentic ID tokens directly to the application.
+                  </p>
+                </div>
+              )}
+            </div>
 
             {/* Official Google Disclosure */}
             <div className="text-[11px] text-[#9aa0a6] leading-relaxed pt-3 border-t border-[#3c4043] space-y-1">

@@ -144,3 +144,116 @@ export function validateChatPrompt(prompt: string): SafetyCheckResult {
 
   return { isSafe: true };
 }
+
+/**
+ * Sanitize filename to prevent Path Traversal attacks (e.g. ../../../etc/passwd)
+ */
+export function sanitizeFileName(rawName: string): string {
+  if (!rawName || typeof rawName !== 'string') return 'document.txt';
+  return rawName
+    .replace(/[\0\r\n\t]/g, '') // Strip control chars & null bytes
+    .replace(/\.\.+[/\\]/g, '') // Strip path traversal .. /
+    .replace(/[/\\]/g, '_') // Replace path slashes with underscore
+    .trim()
+    .slice(0, 150); // Bound length
+}
+
+/**
+ * Validates file buffer magic bytes against declared file format to prevent polyglot / extension spoofing attacks
+ */
+export function validateFileMagicBytes(buffer: Buffer, fileName: string): SafetyCheckResult {
+  if (!buffer || buffer.length === 0) {
+    return { isSafe: false, reason: 'Empty or corrupt file payload.' };
+  }
+
+  const lowerName = fileName.toLowerCase();
+
+  // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2D)
+  if (lowerName.endsWith('.pdf')) {
+    if (buffer.length < 5 || buffer.toString('utf-8', 0, 5) !== '%PDF-') {
+      return {
+        isSafe: false,
+        category: 'malicious_file',
+        reason: 'File integrity failure: Uploaded file extension is .pdf but does not match authentic PDF document header.',
+      };
+    }
+  }
+
+  // PNG magic bytes: 0x89 0x50 0x4E 0x47
+  if (lowerName.endsWith('.png')) {
+    if (buffer.length < 8 || buffer[0] !== 0x89 || buffer[1] !== 0x50 || buffer[2] !== 0x4E || buffer[3] !== 0x47) {
+      return {
+        isSafe: false,
+        category: 'malicious_file',
+        reason: 'File integrity failure: Uploaded file extension is .png but does not match authentic PNG image signature.',
+      };
+    }
+  }
+
+  // JPEG magic bytes: 0xFF 0xD8 0xFF
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+    if (buffer.length < 3 || buffer[0] !== 0xFF || buffer[1] !== 0xD8 || buffer[2] !== 0xFF) {
+      return {
+        isSafe: false,
+        category: 'malicious_file',
+        reason: 'File integrity failure: Uploaded file extension is .jpg/.jpeg but does not match authentic JPEG image signature.',
+      };
+    }
+  }
+
+  // DOCX / XLSX / ZIP magic bytes: PK\x03\x04 (0x50 0x4B 0x03 0x04)
+  if (lowerName.endsWith('.docx') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.pptx')) {
+    if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B || buffer[2] !== 0x03 || buffer[3] !== 0x04) {
+      return {
+        isSafe: false,
+        category: 'malicious_file',
+        reason: 'File integrity failure: Uploaded Office document does not match authentic OpenXML signature.',
+      };
+    }
+  }
+
+  return { isSafe: true };
+}
+
+// Prompt Injection / Jailbreak heuristics
+const PROMPT_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior)\s+instructions/i,
+  /disregard\s+(all\s+)?(previous|prior)\s+instructions/i,
+  /you\s+are\s+now\s+in\s+developer\s+mode/i,
+  /do\s+anything\s+now/i,
+  /dan\s+mode\s+enabled/i,
+  /bypass\s+(all\s+)?safety\s+filters/i,
+  /override\s+system\s+prompt/i,
+  /reveal\s+(your\s+)?system\s+prompt/i,
+  /print\s+initial\s+instructions/i,
+];
+
+/**
+ * Analyzes prompt for hostile prompt injection or jailbreak patterns
+ */
+export function detectPromptInjection(prompt: string): { isSuspicious: boolean; reason?: string } {
+  if (!prompt || typeof prompt !== 'string') return { isSuspicious: false };
+  for (const pattern of PROMPT_INJECTION_PATTERNS) {
+    if (pattern.test(prompt)) {
+      return {
+        isSuspicious: true,
+        reason: 'Prompt injection or jailbreak attempt detected. Academic integrity guard active.',
+      };
+    }
+  }
+  return { isSuspicious: false };
+}
+
+/**
+ * Deep sanitization for strings against script injection and prototype pollution
+ */
+export function sanitizeInputString(input: unknown): string {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Strip <script>...</script>
+    .replace(/javascript\s*:/gi, '') // Strip javascript: schemes
+    .replace(/onload\s*=/gi, '')
+    .replace(/onerror\s*=/gi, '')
+    .replace(/\0/g, '') // Strip null bytes
+    .trim();
+}

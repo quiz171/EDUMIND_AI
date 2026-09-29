@@ -35,6 +35,7 @@ import { MarkdownMessage } from './MarkdownMessage';
 import { UploadZone } from './UploadZone';
 import { BackgroundWatermark } from './BackgroundWatermark';
 import { VortexLogo } from '../common/VortexLogo';
+import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import {
   createSpeechRecognizer,
   speakText,
@@ -93,12 +94,6 @@ export const JssSssChat: React.FC<JssSssChatProps> = ({
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
   const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
-
-  const isAdmin =
-    user?.role === 'admin' ||
-    user?.email?.toLowerCase() === 'codevortex@gmail.com' ||
-    user?.email?.toLowerCase() === 'nelsonwazini@gmail.com' ||
-    Boolean(user?.email?.toLowerCase().includes('admin'));
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -504,6 +499,7 @@ export const JssSssChat: React.FC<JssSssChatProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <PWAInstallButton variant="header" />
             <button
               type="button"
               onClick={onLogout}

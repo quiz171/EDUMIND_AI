@@ -2,18 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EduMind AI </title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <title>EduMind AI - Second Brain</title>
     <meta name="description" content="Adaptive Nigerian student AI assistant application with pre-delivery factual verification, zero-hallucination guard, exam past question photo solving, voice dictation, and RAG document grounding." />
-    <meta property="og:title" content="EduMind AI " />
+    <meta property="og:title" content="EduMind AI - Second Brain" />
     <meta property="og:description" content="Adaptive Nigerian student AI assistant application with pre-delivery factual verification, zero-hallucination guard, exam past question photo solving, voice dictation, and RAG document grounding." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- PWA Primary & iOS Configuration -->
+    <meta name="theme-color" content="#09090b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="EduMind" />
+    <meta name="application-name" content="EduMind" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://accounts.google.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+    <!-- Google Identity Services (GSI) SDK for verified Sign-In -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body class="bg-[#0a0a0a] text-white">
     <div id="root"></div>

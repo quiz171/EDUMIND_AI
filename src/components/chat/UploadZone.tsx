@@ -118,13 +118,38 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       'session_user_token';
 
     try {
-      const response = await fetch('/api/upload', {
+      let response = await fetch('/api/upload', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${effectiveToken}`,
         },
         body: formData,
       });
+
+      if (response.status === 401) {
+        try {
+          const refreshRes = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include',
+          });
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            if (refreshData.token) {
+              localStorage.setItem('edumind_token', refreshData.token);
+              localStorage.setItem('vortex_token', refreshData.token);
+              response = await fetch('/api/upload', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${refreshData.token}`,
+                },
+                body: formData,
+              });
+            }
+          }
+        } catch {
+          // Fall through
+        }
+      }
 
       clearInterval(progressTimer);
       setUploadProgress(100);

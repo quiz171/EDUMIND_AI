@@ -6,7 +6,7 @@ export interface User {
   educationLevel: 'Primary' | 'JSS' | 'SSS' | 'University' | 'Polytechnic' | 'General' | 'Others' | string;
   classYear: string;
   course: string;
-  role?: 'admin' | 'student' | 'others';
+  role?: 'student' | 'others';
   school?: string;
   targetExam?: string;
   bio?: string;

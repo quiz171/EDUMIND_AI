@@ -48,13 +48,13 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
-  const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('mode');
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('profile');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const [currentTheme, setCurrentTheme] = useState<string>('obsidian');
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<Message[]>(messages);
 
-  const handleOpenSettings = (tab: SettingsTab = 'mode') => {
+  const handleOpenSettings = (tab: SettingsTab = 'profile') => {
     setSettingsDefaultTab(tab);
     setShowSettingsModal(true);
   };
@@ -323,7 +323,7 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
     saveCurrentSession(nextMessages, currentDoc, activeSessionId, currentUser);
 
     try {
-      const response = await fetch('/api/chat', {
+      let response = await fetch('/api/chat', {
         method: 'POST',
         signal: controller.signal,
         headers: {
@@ -344,6 +344,47 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
           })),
         }),
       });
+
+      // Automatic 15-minute access token refresh via HttpOnly refresh token cookie
+      if (response.status === 401) {
+        try {
+          const refreshRes = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include',
+          });
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            if (refreshData.token) {
+              currentToken = refreshData.token;
+              localStorage.setItem('edumind_token', refreshData.token);
+              localStorage.setItem('vortex_token', refreshData.token);
+              response = await fetch('/api/chat', {
+                method: 'POST',
+                signal: controller.signal,
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${refreshData.token}`,
+                },
+                body: JSON.stringify({
+                  message: text.trim(),
+                  image: image || undefined,
+                  educationLevel: currentUser.educationLevel,
+                  classYear: currentUser.classYear,
+                  course: currentUser.course,
+                  theme: currentTheme,
+                  ragContext: currentDoc?.textPreview || undefined,
+                  history: messages.slice(-8).map((m) => ({
+                    role: m.role === 'assistant' ? 'model' : 'user',
+                    content: m.content,
+                  })),
+                }),
+              });
+            }
+          }
+        } catch {
+          // Fall through to error handling
+        }
+      }
 
       const data = await response.json();
 
@@ -420,8 +461,15 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
   };
 
   const handleConfirmLogout = () => {
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {});
+
     localStorage.removeItem('vortex_user');
     localStorage.removeItem('vortex_token');
+    localStorage.removeItem('edumind_user');
+    localStorage.removeItem('edumind_token');
     localStorage.removeItem('vortex_initial_prompt');
     localStorage.setItem('vortex_auth_mode', 'login');
     window.location.hash = 'login';

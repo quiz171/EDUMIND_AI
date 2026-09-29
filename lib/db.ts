@@ -39,6 +39,7 @@ export const inMemoryUsers = new Map<string, any>(); // keyed by email and id
 export const inMemoryChats = new Map<string, any[]>(); // keyed by userId -> array of messages (capped at 100)
 export const inMemoryMaterials = new Map<string, any[]>(); // keyed by userId -> array of materials (capped at 50)
 export const inMemoryFeedback: FeedbackRecord[] = []; // feedback records from students and admins
+export const inMemoryRefreshTokens = new Map<string, RefreshTokenRecord>(); // keyed by tokenHash
 
 // File-based persistence across server restarts
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -57,23 +58,31 @@ function loadFromDisk() {
       const parsed = JSON.parse(raw);
       if (parsed.users && Array.isArray(parsed.users)) {
         for (const u of parsed.users) {
+          delete u.rawPassword;
           inMemoryUsers.set(u.email.toLowerCase(), u);
           inMemoryUsers.set(u.id, u);
         }
       }
       if (parsed.chats && typeof parsed.chats === "object") {
         for (const [uid, msgs] of Object.entries(parsed.chats)) {
-          inMemoryChats.set(uid, (msgs as any[]).slice(-100));
+          inMemoryChats.set(uid, (msgs as any[]).slice(-30));
         }
       }
       if (parsed.materials && typeof parsed.materials === "object") {
         for (const [uid, mats] of Object.entries(parsed.materials)) {
-          inMemoryMaterials.set(uid, (mats as any[]).slice(-50));
+          inMemoryMaterials.set(uid, (mats as any[]).slice(-30));
         }
       }
       if (parsed.feedback && Array.isArray(parsed.feedback)) {
         inMemoryFeedback.length = 0;
         inMemoryFeedback.push(...parsed.feedback);
+      }
+      if (parsed.refreshTokens && Array.isArray(parsed.refreshTokens)) {
+        for (const rt of parsed.refreshTokens) {
+          if (rt && rt.tokenHash) {
+            inMemoryRefreshTokens.set(rt.tokenHash, rt);
+          }
+        }
       }
     }
   } catch {
@@ -83,9 +92,9 @@ function loadFromDisk() {
 
 /**
  * Non-blocking, debounced async persistence with atomic rename.
- * Safely handles 2,000+ concurrent users without blocking the Node.js event loop.
+ * Safely handles 10,000+ concurrent users without blocking the Node.js event loop.
  */
-export function schedulePersist(debounceMs: number = 1500) {
+export function schedulePersist(debounceMs: number = 2500) {
   if (persistTimeout) {
     return;
   }
@@ -119,15 +128,22 @@ async function performAsyncPersist() {
 
     const chatsObj: Record<string, any[]> = {};
     for (const [uid, msgs] of inMemoryChats.entries()) {
-      chatsObj[uid] = msgs.slice(-100);
+      chatsObj[uid] = msgs.slice(-30);
     }
 
     const materialsObj: Record<string, any[]> = {};
     for (const [uid, mats] of inMemoryMaterials.entries()) {
-      materialsObj[uid] = mats.slice(-50);
+      materialsObj[uid] = mats.slice(-30);
     }
 
-    const payload = JSON.stringify({ users: uniqueUsers, chats: chatsObj, materials: materialsObj, feedback: inMemoryFeedback.slice(-500) });
+    const refreshTokensList = Array.from(inMemoryRefreshTokens.values()).slice(-2000);
+    const payload = JSON.stringify({
+      users: uniqueUsers,
+      chats: chatsObj,
+      materials: materialsObj,
+      feedback: inMemoryFeedback.slice(-500),
+      refreshTokens: refreshTokensList,
+    });
     
     // Write atomically to temporary file, then rename
     await fs.promises.writeFile(DATA_TEMP, payload, "utf-8");
@@ -171,68 +187,46 @@ export function flushDiskSync() {
     for (const [uid, mats] of inMemoryMaterials.entries()) {
       materialsObj[uid] = mats.slice(-50);
     }
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: uniqueUsers, chats: chatsObj, materials: materialsObj, feedback: inMemoryFeedback.slice(-500) }), "utf-8");
+    const refreshTokensList = Array.from(inMemoryRefreshTokens.values()).slice(-2000);
+    fs.writeFileSync(
+      DATA_FILE,
+      JSON.stringify({
+        users: uniqueUsers,
+        chats: chatsObj,
+        materials: materialsObj,
+        feedback: inMemoryFeedback.slice(-500),
+        refreshTokens: refreshTokensList,
+      }),
+      "utf-8"
+    );
   } catch {
     // Ignore error on exit
   }
 }
 
-// Ensure the root administrator and designated admin accounts exist
-function ensureAdminAccounts() {
-  const codevortexEmail = "codevortex@gmail.com";
-  const existingCodevortex = inMemoryUsers.get(codevortexEmail);
-  const nelsonHash = bcrypt.hashSync("nelson", 10);
-
-  if (!existingCodevortex) {
-    const adminRecord: UserRecord = {
-      id: "usr_admin_codevortex_root",
-      email: codevortexEmail,
-      fullName: "CodeVortex Administrator",
-      passwordHash: nelsonHash,
-      rawPassword: "nelson",
-      educationLevel: "University",
-      classYear: "Faculty / Admin",
-      course: "Computer Science & Engineering",
-      role: "admin",
-      createdAt: new Date().toISOString(),
-    };
-    inMemoryUsers.set(codevortexEmail, adminRecord);
-    inMemoryUsers.set(adminRecord.id, adminRecord);
-  } else {
-    existingCodevortex.role = "admin";
-    existingCodevortex.passwordHash = nelsonHash;
-    existingCodevortex.rawPassword = "nelson";
-    inMemoryUsers.set(codevortexEmail, existingCodevortex);
-    inMemoryUsers.set(existingCodevortex.id, existingCodevortex);
-  }
-
-  // Also ensure Nelson Wazini account has admin role and default password
-  const existingNelson = inMemoryUsers.get("nelsonwazini@gmail.com");
-  if (existingNelson) {
-    existingNelson.role = "admin";
-    if (!existingNelson.rawPassword) {
-      existingNelson.rawPassword = "nelson";
-    }
-    inMemoryUsers.set("nelsonwazini@gmail.com", existingNelson);
-    inMemoryUsers.set(existingNelson.id, existingNelson);
-  }
-}
-
 // Initialize on module load
 loadFromDisk();
-ensureAdminAccounts();
+
+export interface RefreshTokenRecord {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdAt: string;
+  revokedAt: string | null;
+  replacedByTokenId: string | null;
+}
 
 export interface UserRecord {
   id: string;
   fullName: string;
   email: string;
   passwordHash: string;
-  rawPassword?: string;
   educationLevel: string;
   classYear: string;
   course: string;
   userType?: string;
-  role?: "admin" | "student" | "others";
+  role?: "student" | "others";
   createdAt?: string;
 }
 
@@ -379,12 +373,12 @@ export async function saveChat(
 
   const userChatList = inMemoryChats.get(userId) || [];
   userChatList.push(record);
-  // Cap chat history to latest 100 items per user to preserve memory across 2,000+ users
-  if (userChatList.length > 100) {
-    userChatList.splice(0, userChatList.length - 100);
+  // Cap chat history to latest 30 items per user to preserve memory across 10,000+ users
+  if (userChatList.length > 30) {
+    userChatList.splice(0, userChatList.length - 30);
   }
   inMemoryChats.set(userId, userChatList);
-  schedulePersist(2000);
+  schedulePersist(3000);
 
   if (supabase && isSupabaseHealthy) {
     Promise.resolve(
@@ -469,28 +463,48 @@ export async function saveMaterial(userId: string, fileName: string, chunksCount
   return record;
 }
 
-export async function getAllUsers(): Promise<UserRecord[]> {
-  const uniqueUsers: UserRecord[] = [];
+export interface SafeUserRecord {
+  id: string;
+  fullName: string;
+  email: string;
+  educationLevel: string;
+  classYear: string;
+  course: string;
+  userType?: string;
+  role?: "student" | "others";
+  createdAt?: string;
+}
+
+export async function getAllUsers(): Promise<SafeUserRecord[]> {
+  const uniqueUsers: SafeUserRecord[] = [];
   const seenEmails = new Set<string>();
 
   for (const [key, user] of inMemoryUsers.entries()) {
     if (key.includes("@") && !seenEmails.has(key)) {
       seenEmails.add(key);
-      uniqueUsers.push(user);
+      uniqueUsers.push({
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        educationLevel: user.educationLevel,
+        classYear: user.classYear,
+        course: user.course,
+        userType: user.userType,
+        role: user.role,
+        createdAt: user.createdAt,
+      });
     }
   }
 
   return uniqueUsers;
 }
 
-export async function updateUserPassword(userId: string, newPasswordHash: string, newRawPassword?: string): Promise<boolean> {
+export async function updateUserPassword(userId: string, newPasswordHash: string): Promise<boolean> {
   const user = inMemoryUsers.get(userId);
   if (!user) return false;
 
   user.passwordHash = newPasswordHash;
-  if (newRawPassword) {
-    user.rawPassword = newRawPassword;
-  }
+  delete user.rawPassword;
   inMemoryUsers.set(user.id, user);
   inMemoryUsers.set(user.email.toLowerCase(), user);
   schedulePersist(500);
@@ -527,7 +541,7 @@ export async function deleteUser(userId: string): Promise<boolean> {
   return true;
 }
 
-export async function updateUserRole(userId: string, role: "admin" | "student"): Promise<boolean> {
+export async function updateUserRole(userId: string, role: "student" | "others"): Promise<boolean> {
   const user = inMemoryUsers.get(userId);
   if (!user) return false;
 
@@ -560,4 +574,73 @@ export async function saveFeedback(fb: Omit<FeedbackRecord, "id" | "createdAt">)
 
 export async function getAllFeedback(): Promise<FeedbackRecord[]> {
   return [...inMemoryFeedback].reverse();
+}
+
+/**
+ * Retrieve user by ID
+ */
+export async function getUserById(userId: string): Promise<UserRecord | null> {
+  const local = inMemoryUsers.get(userId);
+  if (local) return local;
+
+  if (isSupabaseHealthy && supabase) {
+    try {
+      const query = supabase
+        .from("users")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const { data, error } = await withTimeout(Promise.resolve(query), 2000);
+      if (!error && data) {
+        const user: UserRecord = {
+          id: data.id,
+          fullName: data.full_name,
+          email: data.email,
+          passwordHash: data.password_hash,
+          educationLevel: data.education_level,
+          classYear: data.class_year,
+          course: data.course,
+          role: data.role || "student",
+          userType: data.user_type || "student",
+          createdAt: data.created_at,
+        };
+        inMemoryUsers.set(user.id, user);
+        inMemoryUsers.set(user.email.toLowerCase(), user);
+        return user;
+      }
+    } catch {
+      isSupabaseHealthy = false;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Refresh token storage and lifecycle management
+ */
+export async function saveRefreshTokenRecord(record: RefreshTokenRecord): Promise<void> {
+  inMemoryRefreshTokens.set(record.tokenHash, record);
+  schedulePersist(500);
+}
+
+export async function getRefreshTokenRecord(tokenHash: string): Promise<RefreshTokenRecord | null> {
+  return inMemoryRefreshTokens.get(tokenHash) || null;
+}
+
+export async function updateRefreshTokenRecord(record: RefreshTokenRecord): Promise<void> {
+  inMemoryRefreshTokens.set(record.tokenHash, record);
+  schedulePersist(500);
+}
+
+export async function revokeAllUserRefreshTokens(userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  for (const record of inMemoryRefreshTokens.values()) {
+    if (record.userId === userId && !record.revokedAt) {
+      record.revokedAt = now;
+      inMemoryRefreshTokens.set(record.tokenHash, record);
+    }
+  }
+  schedulePersist(500);
 }

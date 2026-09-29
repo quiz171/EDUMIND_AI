@@ -112,6 +112,20 @@ export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content, isLig
     p({ children }: any) {
       return <p className="mb-2 leading-relaxed last:mb-0">{children}</p>;
     },
+    a({ href, children, ...props }: any) {
+      const safeHref = href && /^(https?:|\/|#|mailto:)/i.test(href) ? href : '#';
+      return (
+        <a
+          href={safeHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 underline hover:text-emerald-300 transition-colors"
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    },
   };
 
   // Enhance source citation tags like [Source: my notes] or [Source: ...]

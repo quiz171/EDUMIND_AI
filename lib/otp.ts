@@ -1,10 +1,10 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import crypto from "crypto";
 
 export interface PendingRegistration {
   fullName: string;
   email: string;
   passwordHash: string;
-  rawPassword?: string;
   educationLevel: string;
   classYear: string;
   course: string;
@@ -23,6 +23,18 @@ export interface OtpRecord {
 // In-memory store for pending OTP verifications
 const pendingOtps = new Map<string, OtpRecord>();
 
+export interface PasswordResetRecord {
+  email: string;
+  code: string;
+  expiresAt: number;
+  attempts: number;
+  lastSentAt: number;
+  fullName?: string;
+}
+
+// In-memory store for pending password resets
+const pendingPasswordResets = new Map<string, PasswordResetRecord>();
+
 // OTP Expiration: 10 minutes
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
 // Resend Cooldown: 30 seconds
@@ -32,14 +44,17 @@ const MAX_ATTEMPTS = 5;
 
 // Lazy nodemailer transporter
 let mailTransporter: Transporter | null = null;
+let smtpAuthFailed = false;
 
 function getMailTransporter(): Transporter | null {
+  if (smtpAuthFailed) return null;
   if (mailTransporter) return mailTransporter;
 
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
   const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
-  const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASSWORD;
+  const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASSWORD;
+  const smtpPass = rawPass ? rawPass.replace(/\s+/g, "").trim() : "";
 
   if (smtpHost && smtpUser && smtpPass) {
     try {
@@ -53,8 +68,8 @@ function getMailTransporter(): Transporter | null {
         },
       });
       return mailTransporter;
-    } catch (err) {
-      console.warn("[OTP] Failed to initialize SMTP transporter:", err);
+    } catch {
+      smtpAuthFailed = true;
       return null;
     }
   }
@@ -62,16 +77,17 @@ function getMailTransporter(): Transporter | null {
   // Gmail service shortcut
   if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
     try {
+      const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "").trim();
       mailTransporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
           user: process.env.GMAIL_USER,
-          pass: process.env.GMAIL_APP_PASSWORD,
+          pass: gmailPass,
         },
       });
       return mailTransporter;
-    } catch (err) {
-      console.warn("[OTP] Failed to initialize Gmail transporter:", err);
+    } catch {
+      smtpAuthFailed = true;
       return null;
     }
   }
@@ -80,11 +96,25 @@ function getMailTransporter(): Transporter | null {
 }
 
 /**
- * Generate a cryptographically sound 6-digit numeric OTP
+ * Generate a cryptographically secure 6-digit numeric OTP using CSPRNG
  */
 export function generateOtpCode(): string {
-  const digits = Math.floor(100000 + Math.random() * 900000);
-  return digits.toString();
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+/**
+ * Constant-time comparison between user input and stored secret OTP to prevent timing attacks
+ */
+function timingSafeCodeMatch(userCode: string, storedCode: string): boolean {
+  if (typeof userCode !== "string" || typeof storedCode !== "string") return false;
+  const cleanUser = userCode.trim().replace(/\D/g, "");
+  const cleanStored = storedCode.trim().replace(/\D/g, "");
+  if (cleanUser.length !== cleanStored.length || cleanUser.length !== 6) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(cleanUser, "utf-8"), Buffer.from(cleanStored, "utf-8"));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -150,8 +180,15 @@ export async function createAndSendOtp(
       });
       emailSent = true;
       console.log(`[AUTH OTP] ✅ Email successfully delivered to ${cleanEmail}`);
-    } catch (mailErr) {
-      console.warn(`[AUTH OTP] ⚠️ SMTP delivery failed, falling back to instant code:`, mailErr);
+    } catch (mailErr: any) {
+      const errMsg = mailErr?.message || String(mailErr);
+      if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
+        smtpAuthFailed = true;
+        mailTransporter = null;
+        console.log(`[AUTH OTP] ℹ️ SMTP credentials inactive (535); providing instant in-app verification code.`);
+      } else {
+        console.log(`[AUTH OTP] ℹ️ SMTP delivery unavailable; providing instant in-app verification code.`);
+      }
     }
   }
 
@@ -237,7 +274,7 @@ export function verifyOtp(
 
   const cleanInput = userEnteredCode.trim().replace(/\D/g, "");
 
-  if (cleanInput !== existing.code) {
+  if (!timingSafeCodeMatch(cleanInput, existing.code)) {
     existing.attempts += 1;
     const remaining = MAX_ATTEMPTS - existing.attempts;
     return {
@@ -267,4 +304,304 @@ export function getPendingOtpInfo(email: string): { exists: boolean; expiresAt?:
     exists: true,
     expiresAt: existing.expiresAt,
   };
+}
+
+/**
+ * Create and register an OTP for a password reset request, then dispatch email
+ */
+export async function createAndSendPasswordResetOtp(
+  email: string,
+  fullName?: string
+): Promise<{ success: boolean; previewOtp: string; message: string; expiresInSeconds: number }> {
+  const cleanEmail = email.toLowerCase().trim();
+  const code = generateOtpCode();
+  const now = Date.now();
+  const expiresAt = now + OTP_EXPIRY_MS;
+
+  const record: PasswordResetRecord = {
+    email: cleanEmail,
+    code,
+    expiresAt,
+    attempts: 0,
+    lastSentAt: now,
+    fullName,
+  };
+
+  pendingPasswordResets.set(cleanEmail, record);
+
+  // Log prominently for development / instant preview
+  console.log(`\n======================================================`);
+  console.log(`[PASSWORD RESET OTP] 📧 Reset code for: ${cleanEmail}`);
+  console.log(`[PASSWORD RESET OTP] 🔑 CODE: ${code}`);
+  console.log(`[PASSWORD RESET OTP] ⏳ Valid for 10 minutes until: ${new Date(expiresAt).toLocaleTimeString()}`);
+  console.log(`======================================================\n`);
+
+  // Attempt real email dispatch if SMTP / Gmail is configured
+  const transporter = getMailTransporter();
+  let emailSent = false;
+
+  if (transporter) {
+    try {
+      const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || "noreply@edumind.ng";
+      await transporter.sendMail({
+        from: `"EduMind AI Security" <${sender}>`,
+        to: cleanEmail,
+        subject: `${code} is your EduMind AI password reset code`,
+        text: `Hello ${fullName || "there"},\n\nYour 6-digit password reset verification code is: ${code}\n\nThis code will expire in 10 minutes. If you did not request a password reset, please ignore this email.`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0b0e; color: #f4f4f5; padding: 40px 20px; text-align: center;">
+            <div style="max-width: 480px; margin: 0 auto; background: #18181b; border: 1px solid #27272a; border-radius: 20px; padding: 36px 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+              <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; border-radius: 12px; background: #10b981; color: #000000; font-size: 20px; font-weight: 900; margin-bottom: 20px;">E</div>
+              <h1 style="color: #ffffff; font-size: 22px; font-weight: 700; margin: 0 0 10px 0;">Reset Your Password</h1>
+              <p style="color: #a1a1aa; font-size: 14px; margin: 0 0 28px 0; line-height: 1.5;">
+                Hello <strong>${fullName || "there"}</strong>, use this 6-digit verification code to reset your EduMind AI account password:
+              </p>
+              <div style="background: #09090b; border: 1px solid #3f3f46; border-radius: 12px; padding: 18px 24px; margin: 0 auto 28px auto; display: inline-block; letter-spacing: 8px; font-size: 32px; font-weight: 800; color: #10b981; font-family: monospace;">
+                ${code}
+              </div>
+              <p style="color: #71717a; font-size: 12px; margin: 0; line-height: 1.5;">
+                This code will expire in 10 minutes.<br/>If you did not request a password reset, you can safely ignore this email.
+              </p>
+            </div>
+            <p style="color: #52525b; font-size: 11px; margin-top: 24px;">&copy; ${new Date().getFullYear()} EduMind AI Platform Security</p>
+          </div>
+        `,
+      });
+      emailSent = true;
+      console.log(`[PASSWORD RESET OTP] ✅ Email successfully delivered to ${cleanEmail}`);
+    } catch (mailErr: any) {
+      const errMsg = mailErr?.message || String(mailErr);
+      if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
+        smtpAuthFailed = true;
+        mailTransporter = null;
+        console.log(`[PASSWORD RESET OTP] ℹ️ SMTP credentials inactive (535); providing instant in-app reset code.`);
+      } else {
+        console.log(`[PASSWORD RESET OTP] ℹ️ SMTP delivery unavailable; providing instant in-app reset code.`);
+      }
+    }
+  }
+
+  return {
+    success: true,
+    previewOtp: code,
+    message: emailSent
+      ? `Password reset code sent to ${cleanEmail}`
+      : `Password reset code generated for ${cleanEmail}`,
+    expiresInSeconds: 600,
+  };
+}
+
+/**
+ * Resend Password Reset OTP with cooldown
+ */
+export async function resendPasswordResetOtp(
+  email: string
+): Promise<{ success: boolean; error?: string; previewOtp?: string; message?: string }> {
+  const cleanEmail = email.toLowerCase().trim();
+  const existing = pendingPasswordResets.get(cleanEmail);
+
+  if (!existing) {
+    return {
+      success: false,
+      error: "No pending password reset found for this email. Please request a new reset code.",
+    };
+  }
+
+  const now = Date.now();
+  const timeSinceLastSent = now - existing.lastSentAt;
+
+  if (timeSinceLastSent < RESEND_COOLDOWN_MS) {
+    const remainingSeconds = Math.ceil((RESEND_COOLDOWN_MS - timeSinceLastSent) / 1000);
+    return {
+      success: false,
+      error: `Please wait ${remainingSeconds} seconds before requesting another code.`,
+    };
+  }
+
+  const result = await createAndSendPasswordResetOtp(cleanEmail, existing.fullName);
+  return {
+    success: true,
+    previewOtp: result.previewOtp,
+    message: `A fresh 6-digit code has been sent to ${cleanEmail}`,
+  };
+}
+
+/**
+ * Verify Password Reset OTP without consuming
+ */
+export function verifyPasswordResetOtp(
+  email: string,
+  userEnteredCode: string
+): { valid: boolean; error?: string } {
+  const cleanEmail = email.toLowerCase().trim();
+  const existing = pendingPasswordResets.get(cleanEmail);
+
+  if (!existing) {
+    return {
+      valid: false,
+      error: "No pending password reset found for this email. Please request a new code.",
+    };
+  }
+
+  const now = Date.now();
+  if (now > existing.expiresAt) {
+    pendingPasswordResets.delete(cleanEmail);
+    return {
+      valid: false,
+      error: "Verification code has expired. Please request a new code.",
+    };
+  }
+
+  if (existing.attempts >= MAX_ATTEMPTS) {
+    pendingPasswordResets.delete(cleanEmail);
+    return {
+      valid: false,
+      error: "Maximum attempts exceeded. Please request a fresh reset code.",
+    };
+  }
+
+  const cleanInput = userEnteredCode.replace(/\D/g, "");
+  if (!timingSafeCodeMatch(cleanInput, existing.code)) {
+    existing.attempts += 1;
+    const remaining = MAX_ATTEMPTS - existing.attempts;
+    return {
+      valid: false,
+      error: `Incorrect reset code. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Consume Password Reset OTP on password change completion
+ */
+export function consumePasswordResetOtp(
+  email: string,
+  userEnteredCode: string
+): { valid: boolean; error?: string } {
+  const verification = verifyPasswordResetOtp(email, userEnteredCode);
+  if (!verification.valid) {
+    return verification;
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  pendingPasswordResets.delete(cleanEmail);
+  return { valid: true };
+}
+
+/**
+ * Dispatch student and user feedback directly to Nelson Wazini (nelsonwazini1@gmail.com)
+ */
+export async function sendFeedbackEmailNotification(data: {
+  rating: number;
+  category: string;
+  message: string;
+  fullName: string;
+  email: string;
+  userId?: string;
+}): Promise<{ sent: boolean; recipient: string; error?: string }> {
+  const recipient = process.env.FEEDBACK_RECEIVER_EMAIL || "nelsonwazini1@gmail.com";
+  const transporter = getMailTransporter();
+
+  const stars = "★".repeat(Math.max(1, Math.min(5, data.rating))) + "☆".repeat(5 - Math.max(1, Math.min(5, data.rating)));
+  const timestamp = new Date().toLocaleString();
+
+  console.log(`\n================== FEEDBACK DISPATCH ==================`);
+  console.log(`To: ${recipient}`);
+  console.log(`From: ${data.fullName || "User"} (${data.email})`);
+  console.log(`Rating: ${data.rating}/5 | Category: ${data.category}`);
+  console.log(`Message: ${data.message}`);
+  console.log(`Time: ${timestamp}`);
+  console.log(`======================================================\n`);
+
+  if (!transporter) {
+    console.log(`[FEEDBACK] Transporter unconfigured; recorded to server logs and DB for ${recipient}.`);
+    return { sent: false, recipient };
+  }
+
+  try {
+    const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || "noreply@edumind.ng";
+    await transporter.sendMail({
+      from: `"EduMind AI Platform" <${sender}>`,
+      to: recipient,
+      replyTo: data.email,
+      subject: `[EduMind Feedback] ${data.category} from ${data.fullName || data.email} (${data.rating}/5 Stars)`,
+      text: `New EduMind AI User Feedback!\n\n` +
+        `Rating: ${data.rating}/5 (${stars})\n` +
+        `Category: ${data.category}\n` +
+        `From: ${data.fullName || "User"} (${data.email})\n` +
+        `User ID: ${data.userId || "anonymous"}\n` +
+        `Time: ${timestamp}\n\n` +
+        `Feedback Message:\n${data.message}\n\n` +
+        `Reply directly to this email to respond to the sender.`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0b0e; color: #f4f4f5; padding: 40px 20px;">
+          <div style="max-width: 580px; margin: 0 auto; background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 32px 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+            <div style="border-bottom: 1px solid #27272a; padding-bottom: 16px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <h1 style="color: #ffffff; font-size: 20px; font-weight: 700; margin: 0 0 4px 0;">New User Feedback Received</h1>
+                <p style="color: #a1a1aa; font-size: 13px; margin: 0;">EduMind AI Platform Notification</p>
+              </div>
+              <div style="font-size: 20px; color: #f59e0b; letter-spacing: 2px;">
+                ${stars}
+              </div>
+            </div>
+
+            <div style="background: #09090b; border: 1px solid #27272a; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <tr>
+                  <td style="color: #71717a; padding: 5px 0; width: 100px;">From:</td>
+                  <td style="color: #ffffff; font-weight: 600;">${data.fullName || "User"}</td>
+                </tr>
+                <tr>
+                  <td style="color: #71717a; padding: 5px 0;">Email:</td>
+                  <td style="color: #38bdf8;"><a href="mailto:${data.email}" style="color: #38bdf8; text-decoration: none;">${data.email}</a></td>
+                </tr>
+                <tr>
+                  <td style="color: #71717a; padding: 5px 0;">Category:</td>
+                  <td style="color: #10b981; font-weight: 600;">${data.category}</td>
+                </tr>
+                <tr>
+                  <td style="color: #71717a; padding: 5px 0;">Rating:</td>
+                  <td style="color: #fbbf24; font-weight: 700;">${data.rating} / 5 Stars</td>
+                </tr>
+                <tr>
+                  <td style="color: #71717a; padding: 5px 0;">Time:</td>
+                  <td style="color: #a1a1aa;">${timestamp}</td>
+                </tr>
+              </table>
+            </div>
+
+            <div style="margin-bottom: 24px;">
+              <h3 style="color: #a1a1aa; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0;">Message Content</h3>
+              <div style="background: #141416; border-left: 3px solid #10b981; padding: 16px; border-radius: 0 8px 8px 0; font-size: 14px; line-height: 1.6; color: #e4e4e7; white-space: pre-wrap;">${data.message}</div>
+            </div>
+
+            <div style="border-top: 1px solid #27272a; padding-top: 16px; text-align: center;">
+              <a href="mailto:${data.email}?subject=Re: Your EduMind AI Feedback (${encodeURIComponent(data.category)})" style="display: inline-block; background: #10b981; color: #000000; font-weight: 700; font-size: 13px; padding: 10px 24px; border-radius: 8px; text-decoration: none;">
+                Reply Directly to ${data.fullName || "User"}
+              </a>
+            </div>
+          </div>
+          <p style="text-align: center; color: #52525b; font-size: 11px; margin-top: 20px;">
+            Delivered directly to Nelson (${recipient}) &bull; EduMind AI
+          </p>
+        </div>
+      `,
+    });
+
+    console.log(`[FEEDBACK] ✅ Email notification successfully delivered to ${recipient}`);
+    return { sent: true, recipient };
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
+      smtpAuthFailed = true;
+      mailTransporter = null;
+      console.log(`[FEEDBACK] ℹ️ SMTP credentials inactive (535); feedback successfully recorded in database.`);
+    } else {
+      console.log(`[FEEDBACK] ℹ️ SMTP delivery unavailable; feedback successfully recorded in database.`);
+    }
+    return { sent: false, recipient, error: errMsg };
+  }
 }
