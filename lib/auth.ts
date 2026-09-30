@@ -9,13 +9,37 @@ import {
   RefreshTokenRecord,
 } from "./db.ts";
 
-// Ensure a secure 256-bit secret is always enforced
+// Ensure a cryptographically secure 256-bit secret is enforced
+let runtimeSecret: Uint8Array | null = null;
+
 const getJwtSecret = (): Uint8Array => {
-  const envSecret = process.env.JWT_SECRET?.trim();
-  if (envSecret && envSecret.length >= 32 && !envSecret.includes("vortex-secret-123")) {
+  const envSecret = (process.env.JWT_SECRET || process.env.SECRET_KEY)?.trim();
+  const isWeak =
+    !envSecret ||
+    envSecret.length < 32 ||
+    envSecret.includes("vortex-secret") ||
+    envSecret.includes("secret-123") ||
+    envSecret.includes("edumind-enterprise");
+
+  if (!isWeak && envSecret) {
     return new TextEncoder().encode(envSecret);
   }
-  return new TextEncoder().encode(envSecret || "edumind-enterprise-sec-key-32chars-minimum-hash-salt-9874!");
+
+  // In production, strictly fail hard. Tokens must never be signed with an ephemeral secret.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "FATAL SECURITY CONFIGURATION: A strong JWT_SECRET environment variable (minimum 32 characters / 256 bits) is strictly required in production to ensure session continuity and signature integrity across restarts."
+    );
+  }
+
+  // Development fallback only
+  if (!runtimeSecret) {
+    runtimeSecret = crypto.randomBytes(32);
+    console.warn(
+      "[Security Notice] Running in development mode with ephemeral 256-bit JWT secret. Configure JWT_SECRET in .env for persistent sessions across restarts."
+    );
+  }
+  return runtimeSecret;
 };
 
 const SECRET = getJwtSecret();

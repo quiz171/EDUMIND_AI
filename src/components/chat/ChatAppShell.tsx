@@ -337,11 +337,6 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
           classYear: currentUser.classYear,
           course: currentUser.course,
           theme: currentTheme,
-          ragContext: currentDoc?.textPreview || undefined,
-          history: messages.slice(-8).map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            content: m.content,
-          })),
         }),
       });
 
@@ -372,11 +367,6 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
                   classYear: currentUser.classYear,
                   course: currentUser.course,
                   theme: currentTheme,
-                  ragContext: currentDoc?.textPreview || undefined,
-                  history: messages.slice(-8).map((m) => ({
-                    role: m.role === 'assistant' ? 'model' : 'user',
-                    content: m.content,
-                  })),
                 }),
               });
             }

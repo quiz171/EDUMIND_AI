@@ -247,6 +247,7 @@ export const EducationSettingsModal: React.FC<EducationSettingsModalProps> = ({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="bg-[#121214] border border-white/10 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col h-[90dvh] sm:h-[620px] text-stone-200">
+        
         {/* Header */}
         <div className="px-6 py-4 border-b border-white/10 bg-[#161618] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -271,6 +272,7 @@ export const EducationSettingsModal: React.FC<EducationSettingsModalProps> = ({
 
         {/* Body Layout: Clean Left Sidebar + Main Panel */}
         <div className="flex flex-col sm:flex-row flex-1 min-h-0 overflow-hidden">
+          
           {/* Navigation Sidebar */}
           <nav className="sm:w-52 shrink-0 bg-[#141416] border-b sm:border-b-0 sm:border-r border-white/10 p-2 sm:p-3 flex sm:flex-col gap-1 overflow-x-auto sm:overflow-visible">
             {navItems.map((item) => {
@@ -296,6 +298,7 @@ export const EducationSettingsModal: React.FC<EducationSettingsModalProps> = ({
 
           {/* Main Content Area */}
           <div className="flex-1 p-5 sm:p-6 overflow-y-auto min-h-0 bg-[#0e0e10] space-y-6">
+            
             {/* 1. Profile & Mode Tab */}
             {activeTab === 'profile' && (
               <div className="space-y-6 max-w-xl animate-in fade-in-50 duration-150">

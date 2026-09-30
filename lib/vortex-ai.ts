@@ -248,14 +248,14 @@ CORE DIRECTIVES & RESPONSE DISCIPLINE:
     }
   }
 
-  // Modern model cascade prioritized for highest availability and instant sub-second response:
-  // 1. gemini-3.1-flash-lite (fastest, highly resilient against 503 high demand spikes)
-  // 2. gemini-3.8-flash (standard text Q&A model)
-  // 3. gemini-flash-latest (general flash alias)
+  // Modern model cascade prioritized for highest availability and separate quota pools:
+  // 1. gemini-3.1-flash-lite (fastest, lightweight, high-throughput separate quota)
+  // 2. gemini-flash-latest (general flash alias)
+  // 3. gemini-3.8-flash (standard text Q&A model)
   const primaryModels = [
     "gemini-3.1-flash-lite",
-    "gemini-3.8-flash",
     "gemini-flash-latest",
+    "gemini-3.8-flash",
   ];
 
   // High-concurrency cache check for common curriculum queries (without images/rag)
@@ -341,12 +341,23 @@ CORE DIRECTIVES & RESPONSE DISCIPLINE:
           lastError = err;
           const errMsg = err?.message || String(err);
           
-          // Fatal invalid model / bad request: immediately try next model
+          // Fatal invalid model, bad request, or quota exhausted: immediately fail over to next model
+          const isQuotaExhausted =
+            errMsg.includes("resource_exhausted") ||
+            errMsg.includes("RESOURCE_EXHAUSTED") ||
+            errMsg.includes("exceeded your current quota") ||
+            errMsg.includes("Quota exceeded");
+
+          if (isQuotaExhausted) {
+            console.warn(`[AI Engine] Quota exceeded on ${modelName}, immediately failing over to alternative model.`);
+            break;
+          }
+
           if (errMsg.includes("400") || errMsg.includes("invalid") || errMsg.includes("404") || errMsg.includes("NOT_FOUND")) {
             break;
           }
 
-          // If demand or rate issue (503 / 429 / UNAVAILABLE / high demand), wait and retry next attempt
+          // If demand or transient rate issue (503 / 429 / UNAVAILABLE / high demand), wait and retry next attempt
           const isDemandIssue = errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("429") || errMsg.includes("UNAVAILABLE");
           if (isDemandIssue && attempt < 1) {
             await sleep(700 + Math.floor(Math.random() * 300));

@@ -38,6 +38,7 @@ import {
   updateUserRole,
   saveFeedback,
   getAllFeedback,
+  revokeAllUserRefreshTokens,
 } from "./lib/db.ts";
 import {
   createAndSendOtp,
@@ -48,9 +49,10 @@ import {
   verifyPasswordResetOtp,
   consumePasswordResetOtp,
   resendPasswordResetOtp,
+  clearPendingOtp,
 } from "./lib/otp.ts";
 import { checkLimit, checkBurstLimit, checkAuthLimit, recordAuthFailure, resetAuthFailures } from "./lib/rate-limiter.ts";
-import { processFile, getRelevantChunks, globalChunks, appendChunks } from "./lib/rag.ts";
+import { processFile, getRelevantChunks, globalChunks, appendChunks, appendUserChunks, getUserChunks, getRelevantChunksForUser } from "./lib/rag.ts";
 import { vortexBrain, cleanAiResponse, geminiSemaphore } from "./lib/vortex-ai.ts";
 import {
   validateFileUpload,
@@ -86,32 +88,60 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // 0. Enable reverse proxy trust (for Render, Cloud Run, Cloudflare) to ensure accurate protocols, hostnames, and client IPs
+  app.set("trust proxy", 1);
+
+  // Helper functions for consistent configuration across environments
+  const getGoogleClientId = (): string => {
+    const raw = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
+    return raw.replace(/^["']|["']$/g, "").trim();
+  };
+
+  const getGoogleClientSecret = (): string => {
+    const raw = process.env.GOOGLE_CLIENT_SECRET || "";
+    return raw.replace(/^["']|["']$/g, "").trim();
+  };
+
+  const getAppUrl = (req: Request): string => {
+    if (process.env.APP_URL) {
+      return process.env.APP_URL.replace(/\/+$/, "");
+    }
+    if (process.env.RENDER_EXTERNAL_URL) {
+      return process.env.RENDER_EXTERNAL_URL.replace(/\/+$/, "");
+    }
+    const forwardedProto = req.headers["x-forwarded-proto"] || req.protocol;
+    const proto = typeof forwardedProto === "string" ? forwardedProto.split(",")[0].trim() : "https";
+    const host = req.get("host") || "localhost:3000";
+    const finalProto = (host.includes("localhost") || host.includes("127.0.0.1")) ? proto : "https";
+    return `${finalProto}://${host}`;
+  };
+
   // 1. Disable server fingerprinting
   app.disable("x-powered-by");
 
   // 2. High-performance gzip/deflate compression for static assets and API payloads
   app.use(compression());
 
-  // 3. Enterprise HTTP Security Headers via Helmet
+  // 3. Enterprise HTTP Security Headers via Helmet (Hardened CSP)
+  const isProduction = process.env.NODE_ENV === "production";
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          upgradeInsecureRequests: null, // Disable forcing HTTPS in dev environment
+          upgradeInsecureRequests: null, // Managed by proxy
           scriptSrc: [
             "'self'",
-            "'unsafe-inline'",
-            "'unsafe-eval'",
-            "blob:",
+            // In production, Vite bundles into static assets. In development, allow inline for Vite HMR bootstrap.
+            ...(isProduction ? [] : ["'unsafe-inline'"]),
             "https://accounts.google.com",
             "https://apis.google.com",
             "https://cdn.jsdelivr.net",
           ],
-          scriptSrcAttr: ["'unsafe-inline'"],
+          scriptSrcAttr: ["'none'"],
           styleSrc: [
             "'self'",
-            "'unsafe-inline'",
+            "'unsafe-inline'", // Required for KaTeX mathematical typesetting and dynamic CSS in SPA
             "https://accounts.google.com",
             "https://fonts.googleapis.com",
             "https://cdn.jsdelivr.net",
@@ -128,12 +158,12 @@ async function startServer() {
           ],
           connectSrc: [
             "'self'",
-            "https:",
-            "http:",
-            "wss:",
-            "ws:",
-            "data:",
-            "blob:",
+            "https://accounts.google.com",
+            "https://oauth2.googleapis.com",
+            "https://www.googleapis.com",
+            "https://generativelanguage.googleapis.com",
+            "https://cdn.jsdelivr.net",
+            ...(isProduction ? [] : ["wss:", "ws:"]),
           ],
           frameSrc: ["'self'", "https://accounts.google.com"],
           frameAncestors: ["'self'", "https://*.google.com", "https://*.run.app"],
@@ -155,12 +185,72 @@ async function startServer() {
     })
   );
 
-  // 4. Hardened CORS Middleware
+  // 4. Hardened Origin-Restricted CORS Middleware
+  const isAllowedOrigin = (origin: string | undefined): boolean => {
+    if (!origin) return true; // Same-origin or non-browser request
+
+    try {
+      const parsed = new URL(origin);
+      const host = parsed.hostname.toLowerCase();
+
+      // Local development origins
+      if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1") {
+        return true;
+      }
+
+      // App URL configured origin (exact origin match)
+      if (process.env.APP_URL) {
+        try {
+          const appUrl = new URL(process.env.APP_URL);
+          if (appUrl.origin.toLowerCase() === parsed.origin.toLowerCase()) {
+            return true;
+          }
+        } catch {}
+      }
+
+      // Render deployment automatic variables
+      if (process.env.RENDER_EXTERNAL_URL) {
+        try {
+          const renderUrl = new URL(process.env.RENDER_EXTERNAL_URL);
+          if (renderUrl.origin.toLowerCase() === parsed.origin.toLowerCase()) {
+            return true;
+          }
+        } catch {}
+      }
+
+      if (process.env.RENDER_EXTERNAL_HOSTNAME) {
+        if (host === process.env.RENDER_EXTERNAL_HOSTNAME.toLowerCase()) {
+          return true;
+        }
+      }
+
+      // Allow onrender.com host for this application
+      if (host.endsWith(".onrender.com")) {
+        return true;
+      }
+
+      // Explicit ALLOWED_ORIGINS whitelist (strict exact match)
+      if (process.env.ALLOWED_ORIGINS) {
+        const allowed = process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim().toLowerCase());
+        if (allowed.includes(origin.toLowerCase()) || allowed.includes(parsed.origin.toLowerCase())) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
   app.use(
     cors({
       origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        callback(null, true);
+        if (isAllowedOrigin(origin)) {
+          callback(null, true);
+        } else {
+          callback(null, false);
+        }
       },
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
@@ -341,7 +431,6 @@ async function startServer() {
         requiresOtp: true,
         email: cleanEmail,
         message: otpResult.message,
-        previewOtp: otpResult.previewOtp,
         expiresIn: otpResult.expiresInSeconds,
       });
     } catch (err: any) {
@@ -438,7 +527,6 @@ async function startServer() {
       return res.json({
         success: true,
         message: result.message,
-        previewOtp: result.previewOtp,
       });
     } catch (err: any) {
       console.error("Resend OTP error:", err);
@@ -533,10 +621,11 @@ async function startServer() {
 
       // 1. Verify Google ID Token (from Google Identity Services SDK)
       if (credential && typeof credential === "string") {
-        const expectedClientId = process.env.GOOGLE_CLIENT_ID;
+        const expectedClientId = getGoogleClientId();
         try {
           if (expectedClientId) {
-            const ticket = await googleAuthClient.verifyIdToken({
+            const client = new OAuth2Client(expectedClientId);
+            const ticket = await client.verifyIdToken({
               idToken: credential,
               audience: expectedClientId,
             });
@@ -566,21 +655,37 @@ async function startServer() {
         }
       }
 
-      // 2. Verify Google Access Token
+      // 2. Verify Google Access Token (with audience and email_verified check via Google tokeninfo)
       if (accessToken && typeof accessToken === "string" && !verifiedEmail) {
+        const expectedClientId = process.env.GOOGLE_CLIENT_ID;
         try {
-          const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (profileRes.ok) {
-            const profile = await profileRes.json();
-            if (profile.email && profile.email_verified !== false) {
-              verifiedEmail = String(profile.email).toLowerCase().trim();
-              verifiedName = profile.name || null;
+          const tokenInfoRes = await fetch(
+            `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+          );
+          if (tokenInfoRes.ok) {
+            const tokenInfo = await tokenInfoRes.json();
+            const isAudValid = !expectedClientId || 
+              tokenInfo.aud === expectedClientId || 
+              tokenInfo.issued_to === expectedClientId || 
+              tokenInfo.azp === expectedClientId;
+            const isEmailVerified = tokenInfo.email_verified === "true" || tokenInfo.email_verified === true;
+
+            if (tokenInfo.email && isEmailVerified && isAudValid) {
+              verifiedEmail = String(tokenInfo.email).toLowerCase().trim();
+              // Retrieve user's display name from userinfo
+              try {
+                const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                });
+                if (profileRes.ok) {
+                  const profile = await profileRes.json();
+                  verifiedName = profile.name || tokenInfo.name || null;
+                }
+              } catch {}
             }
           }
         } catch (e) {
-          console.warn("[Google Auth] Userinfo verification call error:", e);
+          console.warn("[Google Auth] Access Token verification call error:", e);
         }
       }
 
@@ -589,6 +694,9 @@ async function startServer() {
       }
 
       const cleanEmail = verifiedEmail;
+      // Invalidate any pending unverified registration for this email
+      clearPendingOtp(cleanEmail);
+
       let user = await getUserByEmail(cleanEmail);
       const isNewUser = !user;
 
@@ -722,9 +830,13 @@ async function startServer() {
       if (rawRefreshToken && typeof rawRefreshToken === "string") {
         await revokeRefreshToken(rawRefreshToken);
       }
+      const user = await getUserFromRequest(req);
+      if (user?.userId) {
+        await revokeAllUserRefreshTokens(user.userId);
+      }
       clearRefreshTokenCookie(res);
       return res.json({ success: true, message: "Logged out successfully" });
-    } catch (err: any) {
+    } catch {
       clearRefreshTokenCookie(res);
       return res.json({ success: true, message: "Logged out" });
     }
@@ -733,14 +845,14 @@ async function startServer() {
   // Client ID endpoint for Google Identity Services initialization
   app.get("/api/auth/google/client-id", (req: Request, res: Response) => {
     return res.json({
-      clientId: process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "",
+      clientId: getGoogleClientId(),
     });
   });
 
   // Google OAuth URL endpoint
   app.get("/api/auth/google/url", (req: Request, res: Response) => {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const appUrl = (typeof req.query.origin === 'string' && req.query.origin) || process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+    const clientId = getGoogleClientId();
+    const appUrl = (typeof req.query.origin === 'string' && req.query.origin) || getAppUrl(req);
     const redirectUri = (typeof req.query.redirectUri === 'string' && req.query.redirectUri) || `${appUrl}/auth/google/callback`;
 
     let directOAuthUrl: string | null = null;
@@ -756,7 +868,7 @@ async function startServer() {
       directOAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
     }
 
-    // Always route to our authentic popup to prevent Google's redirect_uri_mismatch Error 400
+    // Always route to authentic popup for seamless redirect
     return res.json({
       url: `/auth/google/popup`,
       directOAuthUrl,
@@ -784,9 +896,9 @@ async function startServer() {
     }
 
     try {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+      const clientId = getGoogleClientId();
+      const clientSecret = getGoogleClientSecret();
+      const appUrl = getAppUrl(req);
       const redirectUri = `${appUrl}/auth/google/callback`;
 
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -794,8 +906,8 @@ async function startServer() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           code: String(code),
-          client_id: clientId || "",
-          client_secret: clientSecret || "",
+          client_id: clientId,
+          client_secret: clientSecret,
           redirect_uri: redirectUri,
           grant_type: "authorization_code",
         }),
@@ -803,7 +915,8 @@ async function startServer() {
 
       const tokenData = await tokenRes.json();
       if (!tokenRes.ok || !tokenData.access_token) {
-        throw new Error(tokenData.error_description || "Token exchange failed");
+        console.error("[Google OAuth] Token exchange failure:", tokenData);
+        throw new Error(tokenData.error_description || tokenData.error || "Token exchange failed with Google OAuth. Check GOOGLE_CLIENT_SECRET in environment variables.");
       }
 
       // Fetch user profile from Google
@@ -811,15 +924,20 @@ async function startServer() {
         headers: { Authorization: `Bearer ${tokenData.access_token}` },
       });
       const profile = await profileRes.json();
+      if (!profile || !profile.email || (profile.email_verified !== true && profile.email_verified !== "true")) {
+        throw new Error("Google email address is not verified by Google.");
+      }
 
       const cleanEmail = String(profile.email || "").toLowerCase().trim();
+      clearPendingOtp(cleanEmail);
+
       let user = await getUserByEmail(cleanEmail);
       const isNewUser = !user;
 
       if (!user) {
-        const randomPass = "google_auth_" + Math.random().toString(36).substring(2, 15);
+        const randomPass = crypto.randomBytes(32).toString("hex");
         const passwordHash = await hashPassword(randomPass);
-        const userId = "usr_g_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now();
+        const userId = "usr_g_" + crypto.randomBytes(8).toString("hex") + "_" + Date.now();
 
         user = await saveUser({
           id: userId,
@@ -841,6 +959,8 @@ async function startServer() {
         classYear: user.classYear,
         course: user.course,
       });
+
+      setRefreshTokenCookie(res, tokens.refreshToken);
 
       const safeUser = {
         id: user.id,
@@ -869,7 +989,7 @@ async function startServer() {
                     token: ${JSON.stringify(tokens.accessToken)},
                     user: ${JSON.stringify(safeUser)},
                     isNewUser: ${isNewUser}
-                  }, '*');
+                  }, window.location.origin);
                   setTimeout(() => window.close(), 300);
                 } else {
                   window.location.href = '/#chat';
@@ -896,377 +1016,148 @@ async function startServer() {
     }
   });
 
-  // Authentic Google Sign-In popup endpoint
+  // Authentic Google Sign-In popup endpoint (redirects to authentic Google OAuth or renders interactive GSI popup)
   app.get("/auth/google/popup", (req: Request, res: Response) => {
-    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+    const appUrl = (typeof req.query.origin === "string" && req.query.origin) || getAppUrl(req);
     const redirectUri = `${appUrl}/auth/google/callback`;
-    const clientId = process.env.GOOGLE_CLIENT_ID || "";
+    const clientId = getGoogleClientId();
+    const clientSecret = getGoogleClientSecret();
+
+    // If both clientId and clientSecret are provided AND client requested direct redirect, redirect to Google OAuth authorization code flow
+    if (clientId && clientSecret && req.query.direct === "true") {
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "openid email profile",
+        access_type: "offline",
+        prompt: "select_account",
+      });
+      return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+    }
 
     res.setHeader("Content-Type", "text/html");
-    return res.send(`<!DOCTYPE html>
+    return res.status(200).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <title>Google Sign-In - EduMind AI</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in with Google</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background: #f8f9fa;
-      color: #202124;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 16px;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: #202124; color: #e8eaed; }
-      .card { background: #202124 !important; border-color: #5f6368 !important; }
-      .subtext { color: #9aa0a6 !important; }
-      .account-item { border-color: #3c4043 !important; }
-      .account-item:hover { background: #303134 !important; }
-      .account-email { color: #9aa0a6 !important; }
-      .use-another { border-color: #3c4043 !important; color: #8ab4f8 !important; }
-      .use-another:hover { background: #303134 !important; }
-      .md-input { color: #fff !important; border-color: #5f6368 !important; background: transparent !important; }
-      .md-label { color: #9aa0a6 !important; background: #202124 !important; }
-      .footer-links a, .lang-select { color: #9aa0a6 !important; }
-      .oauth-tip { background: #303134 !important; border-color: #5f6368 !important; color: #bdc1c6 !important; }
-      .disclosure { color: #9aa0a6 !important; border-color: #3c4043 !important; }
-    }
-    .card {
-      width: 100%;
-      max-width: 448px;
-      border: 1px solid #dadce0;
-      border-radius: 8px;
-      padding: 36px 32px 28px;
-      background: #ffffff;
-      box-shadow: 0 1px 3px rgba(60,64,67,0.08);
-      position: relative;
-      overflow: hidden;
-    }
-    .progress-bar {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
-      background: transparent;
-      overflow: hidden;
-      display: none;
-    }
-    .progress-bar .bar {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      width: 50%;
-      background: #1a73e8;
-      animation: progress-indeterminate 1.2s infinite ease-in-out;
-    }
-    @keyframes progress-indeterminate {
-      0% { left: -50%; width: 50%; }
-      50% { left: 25%; width: 60%; }
-      100% { left: 100%; width: 40%; }
-    }
-    .header { text-align: center; margin-bottom: 20px; }
-    .google-logo { width: 44px; height: 44px; margin: 0 auto 10px; }
-    .title { font-size: 22px; font-weight: 400; line-height: 1.33; margin-bottom: 6px; }
-    .subtext { font-size: 14px; color: #5f6368; line-height: 1.42; }
-    .subtext strong { color: inherit; font-weight: 500; }
-
-    .account-list {
-      margin: 18px 0 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .account-item {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 12px 14px;
-      border-radius: 8px;
-      border: 1px solid #dadce0;
-      background: transparent;
-      cursor: pointer;
-      text-align: left;
-      width: 100%;
-      transition: all 0.15s ease;
-      font-family: inherit;
-    }
-    .account-item:hover {
-      background: #f8f9fa;
-      border-color: #1a73e8;
-      box-shadow: 0 1px 3px rgba(26,115,232,0.12);
-    }
-    .account-avatar {
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      background: #1a73e8;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 500;
-      font-size: 16px;
-      shrink: 0;
-    }
-    .account-details { flex: 1; min-width: 0; }
-    .account-name { font-size: 14px; font-weight: 500; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .account-email { font-size: 12px; color: #5f6368; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .signed-in-badge {
-      font-size: 11px;
-      font-weight: 500;
-      color: #1a73e8;
-      background: rgba(26,115,232,0.08);
-      padding: 3px 8px;
-      border-radius: 12px;
-      white-space: nowrap;
-    }
-
-    .use-another {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 10px 14px;
-      border-radius: 8px;
-      border: 1px dashed #dadce0;
-      cursor: pointer;
-      width: 100%;
-      background: transparent;
-      font-family: inherit;
-      color: #1a73e8;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.15s ease;
-    }
-    .use-another:hover { background: #f8f9fa; border-color: #1a73e8; }
-    .use-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      border: 1px solid #1a73e8;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-    }
-
-    .custom-form {
-      display: block;
-      margin-top: 14px;
-    }
-    .form-group { margin: 12px 0 10px; position: relative; }
-    .md-field { position: relative; }
-    .md-input {
-      width: 100%;
-      height: 48px;
-      padding: 12px 14px;
-      border: 1px solid #dadce0;
-      border-radius: 4px;
-      font-size: 14px;
-      outline: none;
-      background: transparent;
-      color: #202124;
-      font-family: inherit;
-    }
-    .md-input:focus { border-color: #1a73e8; border-width: 2px; padding: 11px 13px; }
-    .md-label {
-      position: absolute;
-      left: 12px;
-      top: 14px;
-      font-size: 14px;
-      color: #5f6368;
-      pointer-events: none;
-      background: #fff;
-      padding: 0 4px;
-      transition: 0.18s ease all;
-    }
-    .md-input:focus ~ .md-label,
-    .md-input:not(:placeholder-shown) ~ .md-label {
-      top: -8px;
-      font-size: 11px;
-      color: #1a73e8;
-      font-weight: 500;
-    }
-    .btn-submit {
-      width: 100%;
-      padding: 10px;
-      background: #1a73e8;
-      color: #fff;
-      border: none;
-      border-radius: 20px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      margin-top: 8px;
-      transition: background 0.15s;
-    }
-    .btn-submit:hover { background: #1557b0; }
-
-    .disclosure {
-      font-size: 12px;
-      line-height: 1.5;
-      color: #5f6368;
-      margin-top: 16px;
-      padding-top: 12px;
-      border-top: 1px solid #dadce0;
-    }
-    .disclosure a { color: #1a73e8; text-decoration: none; }
-
-    .oauth-tip {
-      margin-top: 14px;
-      padding: 10px 12px;
-      border-radius: 6px;
-      background: #f1f3f4;
-      border: 1px solid #dadce0;
-      font-size: 11px;
-      color: #5f6368;
-      line-height: 1.45;
-    }
-    .oauth-tip strong { color: #202124; }
-    .oauth-tip code { font-family: monospace; color: #1a73e8; word-break: break-all; }
-    .oauth-tip button {
-      background: #fff;
-      border: 1px solid #dadce0;
-      border-radius: 4px;
-      padding: 3px 8px;
-      font-size: 11px;
-      font-weight: 500;
-      cursor: pointer;
-      margin-top: 6px;
-      color: #1a73e8;
-    }
-
-    .footer-links {
-      width: 100%;
-      max-width: 448px;
-      margin-top: 14px;
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: #5f6368;
-      padding: 0 8px;
-    }
-    .footer-links a { color: #5f6368; text-decoration: none; margin-left: 16px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0c0c0e; color: #f4f4f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { max-width: 480px; width: 100%; background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #ffffff; color: #18181b; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9999px; text-decoration: none; border: none; cursor: pointer; margin-top: 12px; transition: background 0.15s; }
+    .btn:hover { background: #f4f4f5; }
+    .code-box { background: #09090b; border: 1px solid #3f3f46; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 11px; color: #38bdf8; word-break: break-all; margin: 6px 0; text-align: left; }
+    .copy-btn { font-size: 11px; padding: 4px 10px; border-radius: 6px; background: #27272a; border: 1px solid #3f3f46; color: #e4e4e7; cursor: pointer; float: right; margin-top: -2px; }
+    .copy-btn:hover { background: #3f3f46; }
+    .status-msg { font-size: 12px; color: #a1a1aa; margin: 12px 0; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div id="progressBar" class="progress-bar"><div class="bar"></div></div>
-    
-    <div class="header">
-      <svg class="google-logo" viewBox="0 0 24 24">
-        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+    <div style="margin-bottom: 12px;">
+      <svg width="40" height="40" viewBox="0 0 24 24" style="margin: 0 auto;">
+        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
+        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+        <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
       </svg>
-      <h1 class="title">Choose an account</h1>
-      <p class="subtext">to continue to <strong>EduMind AI</strong></p>
     </div>
+    <h2 style="font-size: 18px; margin: 0 0 4px; color: #fff;">Sign in with Google</h2>
+    <p style="font-size: 12px; color: #a1a1aa; margin: 0 0 16px;">EduMind AI Second Brain</p>
 
-    <!-- Google Email Sign-In Form -->
-    <form id="customForm" class="custom-form" onsubmit="handleCustomSubmit(event)">
-      <div class="form-group">
-        <div class="md-field">
-          <input id="emailInput" class="md-input" type="email" placeholder=" " required autofocus />
-          <label for="emailInput" class="md-label">Enter your Google email address</label>
-        </div>
+    <div id="gsi-container" style="display:flex; justify-content:center; min-height: 44px; margin: 12px 0;"></div>
+    <div id="status" class="status-msg">Initializing Google Sign-In...</div>
+
+    <div id="setup-box" style="margin-top: 20px; border-top: 1px solid #27272a; padding-top: 16px; text-align: left;">
+      <div style="font-size: 12px; font-weight: 600; color: #fbbf24; margin-bottom: 8px;">
+        Google Cloud OAuth Credentials:
       </div>
-      <button type="submit" id="submitBtn" class="btn-submit">Continue with Google</button>
-    </form>
+      <p style="font-size: 11px; color: #a1a1aa; margin: 0 0 4px;">
+        Authorized JavaScript Origin:
+        <button class="copy-btn" onclick="navigator.clipboard.writeText('${appUrl}'); this.textContent='Copied!'">Copy</button>
+      </p>
+      <div class="code-box">${appUrl}</div>
 
-    <div class="disclosure">
-      To continue, Google will share your name, email address, and profile picture with EduMind AI. Review our <a href="#">Terms</a> and <a href="#">Privacy Policy</a>.
-    </div>
+      <p style="font-size: 11px; color: #a1a1aa; margin: 10px 0 4px;">
+        Authorized Redirect URI:
+        <button class="copy-btn" onclick="navigator.clipboard.writeText('${redirectUri}'); this.textContent='Copied!'">Copy</button>
+      </p>
+      <div class="code-box">${redirectUri}</div>
 
-    <div class="oauth-tip">
-      <strong>Resolved Error 400: redirect_uri_mismatch</strong><br>
-      Google Cloud requires exact Authorized Redirect URIs. If you are configuring your GCP OAuth credentials, add this redirect URI:
-      <br>
-      <code>${redirectUri}</code>
-      <br>
-      <button type="button" onclick="navigator.clipboard.writeText('${redirectUri}'); this.textContent='URI Copied!'">Copy Callback URI</button>
-    </div>
-  </div>
-
-  <div class="footer-links">
-    <span class="lang-select">English (United States)</span>
-    <div>
-      <a href="#">Help</a>
-      <a href="#">Privacy</a>
-      <a href="#">Terms</a>
+      <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; font-size: 11px; text-decoration: none;">
+          Open Google Cloud Console &rarr;
+        </a>
+        <button onclick="window.close()" style="background: transparent; border: 1px solid #3f3f46; color: #9ca3af; font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+          Close
+        </button>
+      </div>
     </div>
   </div>
 
   <script>
-    function toggleCustomEmail() {
-      const form = document.getElementById('customForm');
-      form.style.display = form.style.display === 'block' ? 'none' : 'block';
-      if (form.style.display === 'block') {
-        document.getElementById('emailInput').focus();
-      }
-    }
+    const clientId = "${clientId}";
+    const statusEl = document.getElementById("status");
 
-    function handleCustomSubmit(e) {
-      e.preventDefault();
-      const email = document.getElementById('emailInput').value.trim();
-      if (!email) return;
-      const name = email.split('@')[0].replace(/[._]/g, ' ');
-      loginWithGoogle(email, name);
-    }
-
-    async function loginWithGoogle(email, name) {
-      const progressBar = document.getElementById('progressBar');
-      progressBar.style.display = 'block';
-
-      const params = new URLSearchParams(window.location.search);
-      const educationLevel = params.get('educationLevel') || 'University';
-      const classYear = params.get('classYear') || '100L';
-      const course = params.get('course') || 'Computer Science';
-
-      try {
-        const res = await fetch('/api/auth/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: email,
-            name: name,
-            educationLevel: educationLevel,
-            classYear: classYear,
-            course: course
-          })
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Sign-In failed');
-
-        if (window.opener) {
-          const targetOrigin = window.location.origin;
+    function handleCredential(credential) {
+      statusEl.textContent = "Verifying Google account...";
+      fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: credential })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.token && window.opener) {
           window.opener.postMessage({
-            type: 'GOOGLE_AUTH_SUCCESS',
+            type: "GOOGLE_AUTH_SUCCESS",
             token: data.token,
             user: data.user,
             isNewUser: data.isNewUser
-          }, targetOrigin);
-          setTimeout(() => window.close(), 250);
-        } else {
-          window.location.href = '/chat-app';
+          }, window.location.origin);
+          statusEl.textContent = "Sign-in successful! Closing window...";
+          setTimeout(() => window.close(), 300);
+        } else if (data.error) {
+          statusEl.textContent = "Error: " + data.error;
         }
-      } catch (err) {
-        alert(err.message || 'Authentication error');
-        progressBar.style.display = 'none';
+      })
+      .catch(err => {
+        statusEl.textContent = "Sign in failed: " + err.message;
+      });
+    }
+
+    function initGoogle() {
+      if (!clientId) {
+        statusEl.textContent = "GOOGLE_CLIENT_ID is not configured in server environment.";
+        return;
+      }
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        try {
+          window.google.accounts.id.initialize({
+            client_id: clientId,
+            callback: (res) => {
+              if (res && res.credential) handleCredential(res.credential);
+            }
+          });
+          const container = document.getElementById("gsi-container");
+          window.google.accounts.id.renderButton(container, {
+            theme: "filled_black",
+            size: "large",
+            shape: "pill"
+          });
+          statusEl.textContent = "Click above to sign in with your Google account.";
+        } catch (e) {
+          statusEl.textContent = "Notice: Origin authorization needed in Google Cloud Console.";
+        }
+      } else {
+        setTimeout(initGoogle, 200);
       }
     }
+
+    window.addEventListener("load", initGoogle);
   </script>
 </body>
 </html>`);
@@ -1295,8 +1186,6 @@ async function startServer() {
         educationLevel,
         classYear,
         course,
-        history: clientHistory,
-        ragContext: clientRagContext,
         image,
         theme,
       } = req.body || {};
@@ -1332,11 +1221,13 @@ async function startServer() {
         }
       }
 
-      const dbHistory = await getHistory(user.userId, 10);
-      const history = clientHistory && clientHistory.length > 0 ? clientHistory : dbHistory;
+      // Authoritative conversation history retrieved strictly from server DB to eliminate dialogue injection
+      const history = await getHistory(user.userId, 10);
 
-      const relevantChunks = cleanMessage ? getRelevantChunks(cleanMessage, globalChunks, 5) : [];
-      const ragContext = clientRagContext || (relevantChunks.length > 0 ? relevantChunks.join("\n---\n") : "");
+      // Authoritative, user-isolated RAG retrieval strictly from this student's uploaded notes
+      const relevantChunks = cleanMessage ? getRelevantChunksForUser(cleanMessage, user.userId, 5) : [];
+      // Do NOT trust or accept client-controlled prompt context to prevent prompt injection
+      const ragContext = relevantChunks.length > 0 ? relevantChunks.join("\n---\n") : "";
 
       const finalEducationLevel = educationLevel || user.educationLevel || "University";
       const finalClassYear = classYear || user.classYear || "Year 1";
@@ -1493,8 +1384,8 @@ async function startServer() {
         });
       }
 
-      // Index chunks into memory safely with bounded size
-      appendChunks(chunks);
+      // Index chunks into user-isolated memory safely with bounded size
+      appendUserChunks(user.userId, chunks);
       saveMaterial(user.userId, fileName, chunks.length).catch((e) => console.warn("Save material failed:", e));
 
       return res.json({
@@ -1595,7 +1486,6 @@ async function startServer() {
       return res.status(200).json({
         success: true,
         message: result.message,
-        previewOtp: result.previewOtp,
         expiresInSeconds: result.expiresInSeconds,
       });
     } catch (err: any) {
@@ -1643,7 +1533,6 @@ async function startServer() {
       return res.status(200).json({
         success: true,
         message: result.message,
-        previewOtp: result.previewOtp,
       });
     } catch (err: any) {
       console.error("Resend reset code error:", err);

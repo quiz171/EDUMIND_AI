@@ -117,13 +117,21 @@ function timingSafeCodeMatch(userCode: string, storedCode: string): boolean {
   }
 }
 
+function maskEmail(email: string): string {
+  const parts = email.split("@");
+  if (parts.length !== 2) return "***";
+  const name = parts[0];
+  const maskedName = name.length <= 2 ? name[0] + "*" : name[0] + "***" + name[name.length - 1];
+  return `${maskedName}@${parts[1]}`;
+}
+
 /**
  * Create and register an OTP for a signup request, then dispatch email
  */
 export async function createAndSendOtp(
   email: string,
   pendingUserData: PendingRegistration
-): Promise<{ success: boolean; previewOtp: string; message: string; expiresInSeconds: number }> {
+): Promise<{ success: boolean; message: string; expiresInSeconds: number }> {
   const cleanEmail = email.toLowerCase().trim();
   const code = generateOtpCode();
   const now = Date.now();
@@ -140,12 +148,8 @@ export async function createAndSendOtp(
 
   pendingOtps.set(cleanEmail, record);
 
-  // Prominently log to server console for instant observability & development
-  console.log(`\n======================================================`);
-  console.log(`[AUTH OTP] 📧 Verification code for: ${cleanEmail}`);
-  console.log(`[AUTH OTP] 🔑 CODE: ${code}`);
-  console.log(`[AUTH OTP] ⏳ Valid for 10 minutes until: ${new Date(expiresAt).toLocaleTimeString()}`);
-  console.log(`======================================================\n`);
+  // Securely log dispatch event without exposing secret OTP code
+  console.log(`[AUTH OTP] Verification code dispatched for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
 
   // Attempt real email dispatch if SMTP is configured
   const transporter = getMailTransporter();
@@ -185,19 +189,18 @@ export async function createAndSendOtp(
       if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
         smtpAuthFailed = true;
         mailTransporter = null;
-        console.log(`[AUTH OTP] ℹ️ SMTP credentials inactive (535); providing instant in-app verification code.`);
+        console.warn(`[AUTH OTP] SMTP credentials inactive (535); please verify SMTP configuration.`);
       } else {
-        console.log(`[AUTH OTP] ℹ️ SMTP delivery unavailable; providing instant in-app verification code.`);
+        console.warn(`[AUTH OTP] SMTP delivery warning: ${errMsg}`);
       }
     }
   }
 
   return {
     success: true,
-    previewOtp: code,
     message: emailSent
       ? `Verification code sent to ${cleanEmail}`
-      : `Verification code generated for ${cleanEmail}`,
+      : `Verification code generated. Please check your email inbox.`,
     expiresInSeconds: 600,
   };
 }
@@ -207,7 +210,7 @@ export async function createAndSendOtp(
  */
 export async function resendOtp(
   email: string
-): Promise<{ success: boolean; error?: string; previewOtp?: string; message?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string }> {
   const cleanEmail = email.toLowerCase().trim();
   const existing = pendingOtps.get(cleanEmail);
 
@@ -229,10 +232,9 @@ export async function resendOtp(
     };
   }
 
-  const result = await createAndSendOtp(cleanEmail, existing.pendingUserData);
+  await createAndSendOtp(cleanEmail, existing.pendingUserData);
   return {
     success: true,
-    previewOtp: result.previewOtp,
     message: `A fresh 6-digit code has been sent to ${cleanEmail}`,
   };
 }
@@ -307,12 +309,21 @@ export function getPendingOtpInfo(email: string): { exists: boolean; expiresAt?:
 }
 
 /**
+ * Clear pending OTP registration on authentic verified external auth (e.g. Google Sign-In)
+ */
+export function clearPendingOtp(email: string): void {
+  if (email && typeof email === "string") {
+    pendingOtps.delete(email.toLowerCase().trim());
+  }
+}
+
+/**
  * Create and register an OTP for a password reset request, then dispatch email
  */
 export async function createAndSendPasswordResetOtp(
   email: string,
   fullName?: string
-): Promise<{ success: boolean; previewOtp: string; message: string; expiresInSeconds: number }> {
+): Promise<{ success: boolean; message: string; expiresInSeconds: number }> {
   const cleanEmail = email.toLowerCase().trim();
   const code = generateOtpCode();
   const now = Date.now();
@@ -329,12 +340,8 @@ export async function createAndSendPasswordResetOtp(
 
   pendingPasswordResets.set(cleanEmail, record);
 
-  // Log prominently for development / instant preview
-  console.log(`\n======================================================`);
-  console.log(`[PASSWORD RESET OTP] 📧 Reset code for: ${cleanEmail}`);
-  console.log(`[PASSWORD RESET OTP] 🔑 CODE: ${code}`);
-  console.log(`[PASSWORD RESET OTP] ⏳ Valid for 10 minutes until: ${new Date(expiresAt).toLocaleTimeString()}`);
-  console.log(`======================================================\n`);
+  // Securely log dispatch event without leaking the secret reset code
+  console.log(`[PASSWORD RESET OTP] Reset code dispatched for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
 
   // Attempt real email dispatch if SMTP / Gmail is configured
   const transporter = getMailTransporter();
@@ -368,25 +375,24 @@ export async function createAndSendPasswordResetOtp(
         `,
       });
       emailSent = true;
-      console.log(`[PASSWORD RESET OTP] ✅ Email successfully delivered to ${cleanEmail}`);
+      console.log(`[PASSWORD RESET OTP] Email delivered to ${maskEmail(cleanEmail)}`);
     } catch (mailErr: any) {
       const errMsg = mailErr?.message || String(mailErr);
       if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
         smtpAuthFailed = true;
         mailTransporter = null;
-        console.log(`[PASSWORD RESET OTP] ℹ️ SMTP credentials inactive (535); providing instant in-app reset code.`);
+        console.warn(`[PASSWORD RESET OTP] SMTP credentials inactive (535); please verify SMTP configuration.`);
       } else {
-        console.log(`[PASSWORD RESET OTP] ℹ️ SMTP delivery unavailable; providing instant in-app reset code.`);
+        console.warn(`[PASSWORD RESET OTP] SMTP delivery warning: ${errMsg}`);
       }
     }
   }
 
   return {
     success: true,
-    previewOtp: code,
     message: emailSent
       ? `Password reset code sent to ${cleanEmail}`
-      : `Password reset code generated for ${cleanEmail}`,
+      : `Password reset code generated. Please check your email inbox.`,
     expiresInSeconds: 600,
   };
 }
@@ -396,7 +402,7 @@ export async function createAndSendPasswordResetOtp(
  */
 export async function resendPasswordResetOtp(
   email: string
-): Promise<{ success: boolean; error?: string; previewOtp?: string; message?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string }> {
   const cleanEmail = email.toLowerCase().trim();
   const existing = pendingPasswordResets.get(cleanEmail);
 
@@ -418,10 +424,9 @@ export async function resendPasswordResetOtp(
     };
   }
 
-  const result = await createAndSendPasswordResetOtp(cleanEmail, existing.fullName);
+  await createAndSendPasswordResetOtp(cleanEmail, existing.fullName);
   return {
     success: true,
-    previewOtp: result.previewOtp,
     message: `A fresh 6-digit code has been sent to ${cleanEmail}`,
   };
 }

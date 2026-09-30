@@ -2,14 +2,43 @@ import mammoth from "mammoth";
 import * as pdfParseModule from "pdf-parse";
 import { GoogleGenAI } from "@google/genai";
 
-// Global in-memory storage for uploaded document chunks (bounded to 3,000 chunks to prevent memory bloat)
+// User-isolated in-memory storage for uploaded document chunks: Map<userId, string[]>
+// Bounded to 1,000 chunks per student to prevent memory exhaustion and cross-tenant data leakage.
+export const userChunks = new Map<string, string[]>();
+
+// Deprecated globalChunks array kept for backwards-compatibility
 export const globalChunks: string[] = [];
+
+export function appendUserChunks(userId: string, newChunks: string[]): void {
+  if (!userId || !newChunks || newChunks.length === 0) return;
+  const current = userChunks.get(userId) || [];
+  for (const c of newChunks) {
+    if (!current.includes(c)) {
+      current.push(c);
+    }
+  }
+  if (current.length > 1000) {
+    current.splice(0, current.length - 1000);
+  }
+  userChunks.set(userId, current);
+}
+
+export function getUserChunks(userId: string): string[] {
+  if (!userId) return [];
+  return userChunks.get(userId) || [];
+}
+
+export function clearUserChunks(userId: string): void {
+  if (userId) {
+    userChunks.delete(userId);
+  }
+}
 
 export function appendChunks(newChunks: string[]) {
   if (!newChunks || newChunks.length === 0) return;
   globalChunks.push(...newChunks);
-  if (globalChunks.length > 3000) {
-    globalChunks.splice(0, globalChunks.length - 3000);
+  if (globalChunks.length > 1000) {
+    globalChunks.splice(0, globalChunks.length - 1000);
   }
 }
 
@@ -145,17 +174,23 @@ export async function processFile(
 
   const chunks = chunkText(text, 1000, 100);
 
-  // Store in global chunks cache
-  for (const c of chunks) {
-    if (!globalChunks.includes(c)) {
-      globalChunks.push(c);
-    }
-  }
-
   return {
     text,
     chunks: chunks.length > 0 ? chunks : [text],
   };
+}
+
+/**
+ * Retrieve user-isolated relevant chunks for a specific authenticated student
+ */
+export function getRelevantChunksForUser(
+  query: string,
+  userId: string,
+  topK: number = 5
+): string[] {
+  if (!userId) return [];
+  const userDocs = getUserChunks(userId);
+  return getRelevantChunks(query, userDocs, topK);
 }
 
 /**

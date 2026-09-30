@@ -29,7 +29,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [otpEmail, setOtpEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpStatus, setOtpStatus] = useState<OtpVerificationStatus>('idle');
-  const [previewOtp, setPreviewOtp] = useState<string | null>(null);
   const [otpResendTimer, setOtpResendTimer] = useState(30);
   const [otpResending, setOtpResending] = useState(false);
   const [otpSuccessMsg, setOtpSuccessMsg] = useState<string | null>(null);
@@ -40,6 +39,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
   const [googleClientId, setGoogleClientId] = useState<string>('');
+  const [gsiButtonRendered, setGsiButtonRendered] = useState(false);
+  const [modalGsiRendered, setModalGsiRendered] = useState(false);
+  const [showGcpNotice, setShowGcpNotice] = useState(false);
+  const [copiedField, setCopiedField] = useState<'origin' | 'redirect' | null>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const modalGoogleBtnRef = useRef<HTMLDivElement>(null);
 
@@ -52,7 +55,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotErrorMsg, setForgotErrorMsg] = useState<string | null>(null);
   const [forgotSuccessMsg, setForgotSuccessMsg] = useState<string | null>(null);
-  const [forgotPreviewCode, setForgotPreviewCode] = useState<string | null>(null);
   const [forgotResendTimer, setForgotResendTimer] = useState(30);
   const [forgotResending, setForgotResending] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -192,7 +194,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         client_id: googleClientId,
         callback: (response: { credential: string }) => {
           if (response && response.credential) {
-            executeGoogleLogin(response.credential);
+            executeGoogleLogin({ credential: response.credential });
           }
         },
         auto_select: false,
@@ -206,8 +208,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
           size: 'large',
           shape: 'pill',
           text: tab === 'signup' ? 'signup_with' : 'signin_with',
-          width: 320,
+          width: Math.min(320, window.innerWidth - 48),
         });
+        setTimeout(() => {
+          if (googleBtnRef.current && googleBtnRef.current.children.length > 0) {
+            setGsiButtonRendered(true);
+          }
+        }, 300);
       }
 
       if (modalGoogleBtnRef.current) {
@@ -217,17 +224,61 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
           size: 'large',
           shape: 'pill',
           text: 'continue_with',
-          width: 320,
+          width: Math.min(320, window.innerWidth - 48),
         });
+        setTimeout(() => {
+          if (modalGoogleBtnRef.current && modalGoogleBtnRef.current.children.length > 0) {
+            setModalGsiRendered(true);
+          }
+        }, 300);
       }
     } catch (e) {
       console.warn('Google Identity Services init notice:', e);
     }
   }, [googleClientId, tab]);
 
+  // Listen for Google OAuth popup callback completion
+  useEffect(() => {
+    const handleAuthMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'GOOGLE_AUTH_SUCCESS') {
+        const { token, user, isNewUser } = event.data;
+        if (token && user) {
+          localStorage.setItem('edumind_user', JSON.stringify(user));
+          localStorage.setItem('edumind_token', token);
+          localStorage.setItem('vortex_user', JSON.stringify(user));
+          localStorage.setItem('vortex_token', token);
+
+          setShowGoogleModal(false);
+
+          if (tab === 'signup' || isNewUser) {
+            const initialLvl = user.educationLevel || 'University';
+            const validClassYears = getClassYearOptions(initialLvl);
+            const defaultClass = validClassYears.includes(user.classYear) 
+              ? user.classYear 
+              : validClassYears[0];
+            const defaultCourse = user.course && user.course !== 'General Studies' 
+              ? user.course 
+              : 'Computer Science';
+
+            setSetupLevel(initialLvl);
+            setSetupClassYear(defaultClass);
+            setSetupCourse(defaultCourse);
+            setOnboardingData(user);
+          } else {
+            onNavigate('/chat-app');
+          }
+        }
+      }
+    };
+
+    window.addEventListener('message', handleAuthMessage);
+    return () => window.removeEventListener('message', handleAuthMessage);
+  }, [tab, onNavigate]);
+
   useEffect(() => {
     // 1. Check Vite env var
-    const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
+    const rawEnvClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
+    const envClientId = rawEnvClientId.replace(/^["']|["']$/g, '').trim();
     if (envClientId) {
       setGoogleClientId(envClientId);
     }
@@ -236,7 +287,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       .then((res) => res.json())
       .then((data) => {
         if (data.clientId) {
-          setGoogleClientId(data.clientId);
+          const cleanId = String(data.clientId).replace(/^["']|["']$/g, '').trim();
+          setGoogleClientId(cleanId);
         }
       })
       .catch(() => {});
@@ -257,10 +309,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
     }
   }, [googleClientId, initGsi]);
 
-  // Authenticate with Google ID Token Credential
-  const executeGoogleLogin = async (credential: string) => {
+  // Authenticate with Google ID Token Credential or OAuth Access Token
+  const executeGoogleLogin = async ({
+    credential,
+    accessToken,
+  }: {
+    credential?: string;
+    accessToken?: string;
+  }) => {
     setErrorMsg(null);
     setGoogleAuthError(null);
+    setShowGcpNotice(false);
     setGoogleAuthLoading(true);
     setLoading(true);
 
@@ -277,6 +336,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           credential,
+          accessToken,
           educationLevel: resolvedLevel,
           classYear: resolvedClass,
           course: resolvedCourse,
@@ -450,30 +510,77 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
     }
   };
 
+  const openGooglePopup = () => {
+    const width = 500;
+    const height = 650;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+    const popupUrl = `/auth/google/popup?origin=${encodeURIComponent(window.location.origin)}`;
+    window.open(
+      popupUrl,
+      'google_oauth_popup',
+      `width=${width},height=${height},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+    );
+  };
+
   const handleGoogleSignIn = () => {
     setErrorMsg(null);
     setGoogleAuthError(null);
+    setShowGcpNotice(false);
 
-    if (googleClientId && (window as any).google?.accounts?.id) {
+    // 1. Try Google Identity Services Token Client (OAuth popup flow without secret requirement)
+    if (googleClientId && (window as any).google?.accounts?.oauth2?.initTokenClient) {
       try {
-        (window as any).google.accounts.id.initialize({
+        const client = (window as any).google.accounts.oauth2.initTokenClient({
           client_id: googleClientId,
-          callback: (response: { credential: string }) => {
-            if (response && response.credential) {
-              executeGoogleLogin(response.credential);
+          scope: 'openid email profile',
+          callback: (tokenResponse: any) => {
+            if (tokenResponse && tokenResponse.access_token) {
+              executeGoogleLogin({ accessToken: tokenResponse.access_token });
+            } else if (tokenResponse && tokenResponse.error) {
+              console.warn('Google token client error:', tokenResponse);
+              if (tokenResponse.error === 'origin_mismatch') {
+                setShowGcpNotice(true);
+                setGoogleAuthError(`Google OAuth Origin Notice: "${window.location.origin}" must be added to Authorized JavaScript Origins in your Google Cloud Console.`);
+              } else {
+                setGoogleAuthError(`Google error: ${tokenResponse.error_description || tokenResponse.error}`);
+              }
             }
           },
-          auto_select: false,
-          cancel_on_tap_outside: true,
+          error_callback: (err: any) => {
+            console.warn('GSI token client error:', err);
+            setShowGcpNotice(true);
+            setGoogleAuthError(`Google OAuth Origin Notice: "${window.location.origin}" is not authorized for this Client ID in Google Cloud Console.`);
+          },
         });
-        (window as any).google.accounts.id.prompt();
+        client.requestAccessToken();
+        return;
+      } catch (e) {
+        console.warn('Google initTokenClient notice:', e);
+      }
+    }
+
+    // 2. Try Google Identity Services One Tap prompt if supported
+    if (googleClientId && (window as any).google?.accounts?.id) {
+      try {
+        (window as any).google.accounts.id.prompt((notification: any) => {
+          if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+            const reason = notification?.getNotDisplayedReason?.();
+            if (reason === 'origin_mismatch') {
+              setShowGcpNotice(true);
+              setGoogleAuthError(`Google OAuth Origin Notice: "${window.location.origin}" must be added to Authorized JavaScript Origins in your Google Cloud Console.`);
+            }
+            openGooglePopup();
+          }
+        });
         return;
       } catch (e) {
         console.warn('GSI prompt notice:', e);
       }
     }
 
-    setShowGoogleModal(true);
+    // 3. Direct authentic Google OAuth popup flow
+    openGooglePopup();
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -502,7 +609,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       if (data.requiresOtp) {
         setOtpStep(true);
         setOtpEmail(data.email || email.toLowerCase().trim());
-        setPreviewOtp(data.previewOtp || null);
         setOtpCode('');
         setOtpStatus('idle');
         setOtpResendTimer(30);
@@ -597,7 +703,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         throw new Error(data.error || 'Failed to resend code');
       }
 
-      setPreviewOtp(data.previewOtp || null);
       setOtpCode('');
       setOtpStatus('idle');
       setOtpResendTimer(30);
@@ -615,11 +720,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       setOtpStatus('idle');
       setOtpErrorMsg(null);
     }
-  };
-
-  const fillPreviewCode = (code: string) => {
-    setOtpCode(code);
-    handleVerifyOtp(code);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -681,7 +781,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         throw new Error(data.error || 'Failed to send reset code');
       }
 
-      setForgotPreviewCode(data.previewOtp || null);
       setForgotSuccessMsg(data.message || 'Verification code sent to your email');
       setForgotResendTimer(30);
       setForgotStep('verify');
@@ -710,7 +809,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         throw new Error(data.error || 'Failed to resend reset code');
       }
 
-      setForgotPreviewCode(data.previewOtp || null);
       setForgotSuccessMsg('A fresh 6-digit reset code has been sent');
       setForgotResendTimer(30);
     } catch (err: any) {
@@ -953,28 +1051,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
                     </button>
                   </p>
                 </div>
-
-                {/* Instant Dev Helper preview */}
-                {forgotPreviewCode && (
-                  <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2 text-emerald-300">
-                      <KeyRound className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>
-                        Security Code: <strong className="font-mono text-sm tracking-wider text-white">{forgotPreviewCode}</strong>
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setForgotCode(forgotPreviewCode);
-                        setForgotErrorMsg(null);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[11px] transition-colors cursor-pointer shrink-0"
-                    >
-                      ⚡ Autofill Code
-                    </button>
-                  </div>
-                )}
 
                 {forgotSuccessMsg && (
                   <div className="p-3 bg-emerald-950/50 border border-emerald-600/50 rounded-2xl text-xs text-emerald-300 flex items-center gap-2">
@@ -1225,25 +1301,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
               </p>
             </div>
 
-            {/* Dev / Preview Autofill Banner */}
-            {previewOtp && (
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 text-emerald-300">
-                  <KeyRound className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>
-                    Code: <strong className="font-mono text-sm tracking-wider text-white">{previewOtp}</strong>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => fillPreviewCode(previewOtp)}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[11px] transition-colors cursor-pointer shrink-0"
-                >
-                  ⚡ Autofill & Verify
-                </button>
-              </div>
-            )}
-
             {/* Dedicated 6-Box OTP Input with Auto-focusing & Visual Status Feedback */}
             <div className="py-1">
               <OtpInput
@@ -1341,39 +1398,101 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         </div>
 
         {/* Google Sign-In Container */}
-        {googleClientId ? (
-          <div className="flex justify-center w-full min-h-[44px]">
-            <div ref={googleBtnRef} className="w-full flex justify-center" />
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => handleGoogleSignIn()}
-            disabled={loading}
-            className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-stone-100 active:bg-stone-200 text-stone-900 font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-md active:scale-98 cursor-pointer disabled:opacity-50 border border-stone-200"
-            title="Continue with your Google Account"
-          >
-            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-              />
-            </svg>
-            <span>{tab === 'signup' ? 'Sign up with Google' : 'Sign in with Google'}</span>
-          </button>
-        )}
+        <div className="w-full flex flex-col items-center">
+          <div 
+            ref={googleBtnRef} 
+            className={`w-full flex justify-center ${gsiButtonRendered ? 'block' : 'hidden'}`} 
+          />
+          {!gsiButtonRendered && (
+            <button
+              type="button"
+              onClick={() => handleGoogleSignIn()}
+              disabled={loading || googleAuthLoading}
+              className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-stone-100 active:bg-stone-200 text-stone-900 font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-md active:scale-98 cursor-pointer disabled:opacity-50 border border-stone-200"
+              title="Continue with your Google Account"
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                />
+              </svg>
+              <span>{googleAuthLoading ? 'Connecting to Google...' : (tab === 'signup' ? 'Sign up with Google' : 'Sign in with Google')}</span>
+            </button>
+          )}
+
+          {/* Google OAuth GCP Setup Helper if Origin Mismatch Occurs */}
+          {showGcpNotice && (
+            <div className="w-full mt-3 p-3.5 rounded-2xl bg-amber-950/40 border border-amber-600/40 text-left text-xs text-amber-200 space-y-2">
+              <div className="flex items-center gap-2 font-semibold text-amber-300">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Google OAuth Configuration Needed</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-200/90">
+                To enable Google Sign-In for this domain in Google Cloud Console:
+              </p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between bg-black/60 p-2 rounded-xl border border-amber-900/50">
+                  <span className="text-[10px] text-stone-400">Authorized JavaScript Origin:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(window.location.origin);
+                      setCopiedField('origin');
+                      setTimeout(() => setCopiedField(null), 2000);
+                    }}
+                    className="text-[10px] text-amber-400 hover:text-white underline cursor-pointer font-mono font-medium"
+                  >
+                    {copiedField === 'origin' ? 'Copied!' : 'Copy Origin'}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between bg-black/60 p-2 rounded-xl border border-amber-900/50">
+                  <span className="text-[10px] text-stone-400">Authorized Redirect URI:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/auth/google/callback`);
+                      setCopiedField('redirect');
+                      setTimeout(() => setCopiedField(null), 2000);
+                    }}
+                    className="text-[10px] text-amber-400 hover:text-white underline cursor-pointer font-mono font-medium"
+                  >
+                    {copiedField === 'redirect' ? 'Copied!' : 'Copy Callback'}
+                  </button>
+                </div>
+              </div>
+              <div className="pt-1 flex items-center justify-between">
+                <a
+                  href="https://console.cloud.google.com/apis/credentials"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-amber-400 hover:text-amber-200 underline font-medium"
+                >
+                  Open Google Cloud Console &rarr;
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowGcpNotice(false)}
+                  className="text-[10px] text-stone-400 hover:text-white cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Or continue with email divider */}
         <div className="flex items-center gap-3 my-4">
@@ -1848,10 +1967,66 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
             {/* Google Identity Modal Content */}
             <div className="space-y-4 my-4">
               {googleClientId ? (
-                <div className="flex flex-col items-center gap-3 py-2">
-                  <div ref={modalGoogleBtnRef} className="w-full flex justify-center" />
+                <div className="flex flex-col items-center gap-3 py-2 w-full">
+                  <div 
+                    ref={modalGoogleBtnRef} 
+                    className={`w-full flex justify-center ${modalGsiRendered ? 'block' : 'hidden'}`} 
+                  />
+                  {!modalGsiRendered && (
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleSignIn()}
+                      disabled={loading || googleAuthLoading}
+                      className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-stone-100 active:bg-stone-200 text-stone-900 font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-md active:scale-98 cursor-pointer disabled:opacity-50 border border-stone-200"
+                    >
+                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                        <path
+                          fill="#4285F4"
+                          d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                        />
+                      </svg>
+                      <span>{googleAuthLoading ? 'Connecting...' : 'Continue with Google'}</span>
+                    </button>
+                  )}
+                  {showGcpNotice && (
+                    <div className="w-full mt-2 p-3 rounded-xl bg-amber-950/40 border border-amber-600/40 text-left text-xs text-amber-200 space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-semibold text-amber-300 text-[11px]">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>Origin Authorization Required</span>
+                      </div>
+                      <p className="text-[10px] text-amber-200/90 leading-tight">
+                        Add this domain to Authorized JavaScript Origins in Google Cloud Console:
+                      </p>
+                      <div className="flex items-center justify-between bg-black/60 p-1.5 rounded-lg border border-amber-900/50">
+                        <span className="text-[9px] text-stone-400 font-mono truncate max-w-[200px]">{window.location.origin}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(window.location.origin);
+                            setCopiedField('origin');
+                            setTimeout(() => setCopiedField(null), 2000);
+                          }}
+                          className="text-[9px] text-amber-400 hover:text-white underline cursor-pointer"
+                        >
+                          {copiedField === 'origin' ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <p className="text-xs text-[#9aa0a6] text-center">
-                    Click the official Google button above to authenticate with your verified Google Account.
+                    Authenticate securely with your verified Google Account.
                   </p>
                 </div>
               ) : (

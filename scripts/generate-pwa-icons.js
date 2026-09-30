@@ -25,6 +25,7 @@ const svgStandard = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 51
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
   <rect width="508" height="508" x="2" y="2" rx="110" fill="none" stroke="#27272a" stroke-width="3" opacity="0.6" />
+  
   <!-- Neural Spark Core -->
   <circle cx="256" cy="256" r="170" fill="none" stroke="#10b981" stroke-width="4" stroke-dasharray="14 10" opacity="0.3" />
   <circle cx="256" cy="256" r="130" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="8 8" opacity="0.4" />
@@ -59,10 +60,12 @@ const svgMaskable = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 51
   </defs>
   <!-- Full bleed background for maskable -->
   <rect width="512" height="512" fill="url(#bgGradMask)" />
+  
   <!-- Safe Zone Graphic scaled inside 80% box -->
   <g transform="translate(64, 64) scale(0.75)">
     <!-- Circular ambient orbit -->
     <circle cx="256" cy="256" r="160" fill="none" stroke="#10b981" stroke-width="4" stroke-dasharray="14 10" opacity="0.35" />
+    
     <!-- Monogram -->
     <rect x="144" y="136" width="56" height="240" rx="20" fill="url(#glowGradMask)" />
     <rect x="144" y="136" width="216" height="52" rx="20" fill="url(#glowGradMask)" />
