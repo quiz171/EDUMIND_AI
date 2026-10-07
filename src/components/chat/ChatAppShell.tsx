@@ -304,7 +304,7 @@ export const ChatAppShell: React.FC<ChatAppShellProps> = ({ onNavigate }) => {
 
     const userMessage: Message = {
       role: 'user',
-      content: text.trim() || (image ? '📷 [Attached Exam Past Question Photo]' : ''),
+      content: text.trim(),
       timestamp: new Date().toISOString(),
       attachedDoc: currentDoc?.fileName,
       image: image || undefined,

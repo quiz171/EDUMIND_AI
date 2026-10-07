@@ -588,7 +588,9 @@ export const JssSssChat: React.FC<JssSssChatProps> = ({
                       {isUser && (msg.imageUrl || msg.image?.data) && (
                         <div
                           onClick={() => setPreviewModalImage(msg.imageUrl || msg.image?.data || null)}
-                          className="relative overflow-hidden rounded-xl border border-white/20 max-w-xs mb-2.5 shadow-md cursor-pointer group"
+                          className={`relative overflow-hidden rounded-xl border border-white/20 max-w-xs shadow-md cursor-pointer group ${
+                            msg.content && msg.content.trim() && !msg.content.includes('[Attached Exam Past Question Photo]') ? 'mb-2.5' : ''
+                          }`}
                           title="Click to enlarge past question photo"
                         >
                           <img
@@ -640,7 +642,12 @@ export const JssSssChat: React.FC<JssSssChatProps> = ({
                           </button>
                         </div>
                       )}
-                      <MarkdownMessage content={msg.content} isLightMode={false} />
+                      {Boolean(
+                        !isUser ||
+                          (msg.content &&
+                            msg.content.trim() &&
+                            !msg.content.includes('[Attached Exam Past Question Photo]'))
+                      ) && <MarkdownMessage content={msg.content} isLightMode={false} />}
                     </div>
                   </div>
                 );

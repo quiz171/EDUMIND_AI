@@ -12,7 +12,8 @@ import cookieParser from "cookie-parser";
 import { OAuth2Client } from "google-auth-library";
 import { createServer as createViteServer } from "vite";
 
-const googleAuthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const DEFAULT_GOOGLE_CLIENT_ID = "270002984301-gqoi85e60pi7fner35btd40b7gljhpk5.apps.googleusercontent.com";
+const googleAuthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID);
 
 import {
   hashPassword,
@@ -93,7 +94,7 @@ async function startServer() {
 
   // Helper functions for consistent configuration across environments
   const getGoogleClientId = (): string => {
-    const raw = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
+    const raw = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
     return raw.replace(/^["']|["']$/g, "").trim();
   };
 
@@ -657,7 +658,7 @@ async function startServer() {
 
       // 2. Verify Google Access Token (with audience and email_verified check via Google tokeninfo)
       if (accessToken && typeof accessToken === "string" && !verifiedEmail) {
-        const expectedClientId = process.env.GOOGLE_CLIENT_ID;
+        const expectedClientId = getGoogleClientId();
         try {
           const tokenInfoRes = await fetch(
             `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`

@@ -35,10 +35,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [otpErrorMsg, setOtpErrorMsg] = useState<string | null>(null);
 
   // Google Identity Services (GSI) Verified Authentication State
+  const DEFAULT_GOOGLE_CLIENT_ID = '270002984301-gqoi85e60pi7fner35btd40b7gljhpk5.apps.googleusercontent.com';
   const [showGoogleModal, setShowGoogleModal] = useState(false);
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
-  const [googleClientId, setGoogleClientId] = useState<string>('');
+  const [googleClientId, setGoogleClientId] = useState<string>(DEFAULT_GOOGLE_CLIENT_ID);
   const [gsiButtonRendered, setGsiButtonRendered] = useState(false);
   const [modalGsiRendered, setModalGsiRendered] = useState(false);
   const [showGcpNotice, setShowGcpNotice] = useState(false);

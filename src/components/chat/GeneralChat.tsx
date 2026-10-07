@@ -588,9 +588,16 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
                           </div>
                         )}
 
-                        <div className="bg-gradient-to-r from-cyan-600 to-indigo-600 text-white px-4 py-2.5 rounded-3xl rounded-br-xs text-sm leading-relaxed shadow-md">
-                          <p className="whitespace-pre-wrap select-text">{msg.content}</p>
-                        </div>
+                        {Boolean(
+                          msg.content &&
+                            msg.content.trim() &&
+                            !msg.content.includes('[Attached Exam Past Question Photo]') &&
+                            !msg.content.includes('[Attached Image]')
+                        ) && (
+                          <div className="bg-gradient-to-r from-cyan-600 to-indigo-600 text-white px-4 py-2.5 rounded-3xl rounded-br-xs text-sm leading-relaxed shadow-md">
+                            <p className="whitespace-pre-wrap select-text">{msg.content}</p>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex flex-col items-start max-w-[92%] sm:max-w-[88%] space-y-1">

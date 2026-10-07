@@ -462,7 +462,12 @@ export const PrimaryMode: React.FC<PrimaryModeProps> = ({
                           </button>
                         </div>
                       )}
-                      <MarkdownMessage content={msg.content} isLightMode={false} />
+                      {Boolean(
+                        !isUser ||
+                          (msg.content &&
+                            msg.content.trim() &&
+                            !msg.content.includes('[Attached Exam Past Question Photo]'))
+                      ) && <MarkdownMessage content={msg.content} isLightMode={false} />}
                     </div>
                   </div>
                 );

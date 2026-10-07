@@ -601,9 +601,15 @@ export const UniversityChat: React.FC<UniversityChatProps> = ({
                             <span className="truncate max-w-[180px] sm:max-w-xs">{msg.attachedDoc}</span>
                           </div>
                         )}
-                        <div className="bg-[#2f2f2f] text-white rounded-3xl rounded-br-md px-4 sm:px-5 py-3 sm:py-3.5 text-sm md:text-base leading-relaxed border border-white/10 font-normal shadow-sm">
-                          {msg.content}
-                        </div>
+                        {Boolean(
+                          msg.content &&
+                            msg.content.trim() &&
+                            !msg.content.includes('[Attached Exam Past Question Photo]')
+                        ) && (
+                          <div className="bg-[#2f2f2f] text-white rounded-3xl rounded-br-md px-4 sm:px-5 py-3 sm:py-3.5 text-sm md:text-base leading-relaxed border border-white/10 font-normal shadow-sm">
+                            {msg.content}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="w-full space-y-2">
