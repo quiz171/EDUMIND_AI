@@ -40,6 +40,7 @@ import {
   saveFeedback,
   getAllFeedback,
   revokeAllUserRefreshTokens,
+  getDatabaseStatus,
 } from "./lib/db.ts";
 import {
   createAndSendOtp,
@@ -359,6 +360,7 @@ async function startServer() {
       service: "EduMind AI High-Concurrency Engine",
       timestamp: new Date().toISOString(),
       capacity: "10,000+ concurrent students & users",
+      database: getDatabaseStatus(),
       concurrency: geminiSemaphore.stats,
       system: {
         rssMb: Math.round(memory.rss / (1024 * 1024)),
