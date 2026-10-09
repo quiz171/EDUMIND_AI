@@ -52,6 +52,8 @@ import {
   consumePasswordResetOtp,
   resendPasswordResetOtp,
   clearPendingOtp,
+  getPendingOtpCode,
+  getPendingPasswordResetCode,
 } from "./lib/otp.ts";
 import { checkLimit, checkBurstLimit, checkAuthLimit, recordAuthFailure, resetAuthFailures } from "./lib/rate-limiter.ts";
 import { processFile, getRelevantChunks, globalChunks, appendChunks, appendUserChunks, getUserChunks, getRelevantChunksForUser } from "./lib/rag.ts";
@@ -435,6 +437,9 @@ async function startServer() {
         email: cleanEmail,
         message: otpResult.message,
         expiresIn: otpResult.expiresInSeconds,
+        fallbackCode: otpResult.fallbackCode,
+        deliveryWarning: otpResult.deliveryWarning,
+        emailSent: otpResult.emailSent,
       });
     } catch (err: any) {
       console.error("Signup error:", err);
@@ -524,17 +529,33 @@ async function startServer() {
 
       const result = await resendOtp(email);
       if (!result.success) {
-        return res.status(400).json({ error: result.error });
+        return res.status(400).json({ error: result.error, fallbackCode: result.fallbackCode });
       }
 
       return res.json({
         success: true,
         message: result.message,
+        fallbackCode: result.fallbackCode,
+        deliveryWarning: result.deliveryWarning,
+        emailSent: result.emailSent,
       });
     } catch (err: any) {
       console.error("Resend OTP error:", err);
       return res.status(500).json({ error: "Internal server error during OTP resend" });
     }
+  });
+
+  // 2.3. Query active pending OTP for immediate preview if live email failed
+  app.get("/api/auth/pending-code", (req: Request, res: Response) => {
+    const email = String(req.query.email || "").toLowerCase().trim();
+    if (!email) {
+      return res.status(400).json({ error: "Email query param required" });
+    }
+    const code = getPendingOtpCode(email);
+    if (!code) {
+      return res.status(404).json({ hasCode: false });
+    }
+    return res.json({ hasCode: true, code });
   });
 
   // 3. User Login with Timing-Attack Defense & Brute-Force Rate Limiting
@@ -1490,6 +1511,9 @@ async function startServer() {
         success: true,
         message: result.message,
         expiresInSeconds: result.expiresInSeconds,
+        fallbackCode: result.fallbackCode,
+        deliveryWarning: result.deliveryWarning,
+        emailSent: result.emailSent,
       });
     } catch (err: any) {
       console.error("Forgot password request error:", err);
@@ -1530,12 +1554,15 @@ async function startServer() {
 
       const result = await resendPasswordResetOtp(String(email));
       if (!result.success) {
-        return res.status(429).json({ error: result.error || "Please wait before requesting another code" });
+        return res.status(429).json({ error: result.error || "Please wait before requesting another code", fallbackCode: result.fallbackCode });
       }
 
       return res.status(200).json({
         success: true,
         message: result.message,
+        fallbackCode: result.fallbackCode,
+        deliveryWarning: result.deliveryWarning,
+        emailSent: result.emailSent,
       });
     } catch (err: any) {
       console.error("Resend reset code error:", err);

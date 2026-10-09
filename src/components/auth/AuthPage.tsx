@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, ArrowRight, Lock, Mail, User as UserIcon, BookOpen, GraduationCap, AlertCircle, X, Check, ShieldCheck, RefreshCw, ArrowLeft, KeyRound, CheckCircle2, Compass, Briefcase, Eye, EyeOff } from 'lucide-react';
+import { Sparkles, ArrowRight, Lock, Mail, User as UserIcon, BookOpen, GraduationCap, AlertCircle, AlertTriangle, X, Check, ShieldCheck, RefreshCw, ArrowLeft, KeyRound, CheckCircle2, Compass, Briefcase, Eye, EyeOff } from 'lucide-react';
 import { User } from '../../types';
 import { OtpInput, OtpVerificationStatus } from './OtpInput';
 import { BackgroundWatermark } from '../chat/BackgroundWatermark';
@@ -33,6 +33,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [otpResending, setOtpResending] = useState(false);
   const [otpSuccessMsg, setOtpSuccessMsg] = useState<string | null>(null);
   const [otpErrorMsg, setOtpErrorMsg] = useState<string | null>(null);
+  const [otpFallbackCode, setOtpFallbackCode] = useState<string | null>(null);
+  const [otpDeliveryWarning, setOtpDeliveryWarning] = useState<string | null>(null);
 
   // Google Identity Services (GSI) Verified Authentication State
   const DEFAULT_GOOGLE_CLIENT_ID = '270002984301-gqoi85e60pi7fner35btd40b7gljhpk5.apps.googleusercontent.com';
@@ -60,6 +62,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
   const [forgotResending, setForgotResending] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [forgotFallbackCode, setForgotFallbackCode] = useState<string | null>(null);
+  const [forgotDeliveryWarning, setForgotDeliveryWarning] = useState<string | null>(null);
 
   // Countdown timer for OTP resend
   useEffect(() => {
@@ -70,6 +74,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       return () => clearTimeout(timer);
     }
   }, [otpStep, otpResendTimer]);
+
+  // When OTP step is active, query pending code if not already received so user is never stranded
+  useEffect(() => {
+    if (otpStep && otpEmail && !otpFallbackCode) {
+      fetch(`/api/auth/pending-code?email=${encodeURIComponent(otpEmail)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.hasCode && data.code) {
+            setOtpFallbackCode(data.code);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [otpStep, otpEmail, otpFallbackCode]);
 
   // Countdown timer for Forgot Password resend
   useEffect(() => {
@@ -615,6 +633,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
         setOtpResendTimer(30);
         setOtpSuccessMsg(data.message || `A 6-digit code has been sent to ${data.email || email}`);
         setOtpErrorMsg(null);
+        if (data.fallbackCode) {
+          setOtpFallbackCode(data.fallbackCode);
+        }
+        if (data.deliveryWarning) {
+          setOtpDeliveryWarning(data.deliveryWarning);
+        }
         return;
       }
 
@@ -708,6 +732,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
       setOtpStatus('idle');
       setOtpResendTimer(30);
       setOtpSuccessMsg(data.message || 'A fresh 6-digit verification code was sent!');
+      if (data.fallbackCode) {
+        setOtpFallbackCode(data.fallbackCode);
+      }
+      if (data.deliveryWarning) {
+        setOtpDeliveryWarning(data.deliveryWarning);
+      }
     } catch (err: any) {
       setOtpErrorMsg(err.message || 'Could not resend code. Please wait and try again.');
     } finally {
@@ -784,6 +814,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
 
       setForgotSuccessMsg(data.message || 'Verification code sent to your email');
       setForgotResendTimer(30);
+      if (data.fallbackCode) {
+        setForgotFallbackCode(data.fallbackCode);
+      }
+      if (data.deliveryWarning) {
+        setForgotDeliveryWarning(data.deliveryWarning);
+      }
       setForgotStep('verify');
     } catch (err: any) {
       setForgotErrorMsg(err.message || 'Failed to send reset code');
@@ -812,6 +848,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
 
       setForgotSuccessMsg('A fresh 6-digit reset code has been sent');
       setForgotResendTimer(30);
+      if (data.fallbackCode) {
+        setForgotFallbackCode(data.fallbackCode);
+      }
+      if (data.deliveryWarning) {
+        setForgotDeliveryWarning(data.deliveryWarning);
+      }
     } catch (err: any) {
       setForgotErrorMsg(err.message || 'Failed to resend code');
     } finally {
@@ -1067,6 +1109,36 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
                   </div>
                 )}
 
+                {/* Password Reset Code Fallback Banner */}
+                {forgotFallbackCode && (
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2 text-left animate-in fade-in">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-1.5">
+                        <p className="font-semibold text-amber-300 text-xs">
+                          {forgotDeliveryWarning || "Email Delivery Notice (Google SMTP)"}
+                        </p>
+                        <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                          Your 6-digit password reset code is ready below:
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <span className="font-mono text-base font-extrabold text-white bg-black/60 px-3 py-1 rounded-xl border border-amber-400/40 tracking-widest">
+                            {forgotFallbackCode}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setForgotCode(forgotFallbackCode)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Auto-fill Code</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <form onSubmit={handleCompletePasswordReset} className="space-y-4">
                   {/* 6-Digit Code */}
                   <div className="space-y-1.5">
@@ -1301,6 +1373,39 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onNavigate }) => {
                 </span>
               </p>
             </div>
+
+            {/* Email Delivery Notice & Immediate Verification Fallback */}
+            {otpFallbackCode && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2 text-left animate-in fade-in">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 space-y-1.5">
+                    <p className="font-semibold text-amber-300 text-xs">
+                      {otpDeliveryWarning || "Live Email Delivery Alert (Gmail SMTP 535 Bad Credentials)"}
+                    </p>
+                    <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                      Google requires a 16-character App Password to deliver live emails. Your verification code is provided below so you can proceed immediately:
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="font-mono text-base font-extrabold text-white bg-black/60 px-3 py-1 rounded-xl border border-amber-400/40 tracking-widest">
+                        {otpFallbackCode}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOtpCode(otpFallbackCode);
+                          handleVerifyOtp(otpFallbackCode);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Auto-fill & Verify</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Dedicated 6-Box OTP Input with Auto-focusing & Visual Status Feedback */}
             <div className="py-1">

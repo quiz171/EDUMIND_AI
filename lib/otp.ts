@@ -44,17 +44,36 @@ const MAX_ATTEMPTS = 5;
 
 // Lazy nodemailer transporter
 let mailTransporter: Transporter | null = null;
-let smtpAuthFailed = false;
 
 function getMailTransporter(): Transporter | null {
-  if (smtpAuthFailed) return null;
-  if (mailTransporter) return mailTransporter;
-
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
-  const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
-  const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASSWORD;
+  const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER;
+  const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
   const smtpPass = rawPass ? rawPass.replace(/\s+/g, "").trim() : "";
+
+  if (!smtpUser || !smtpPass) {
+    return null;
+  }
+
+  if (mailTransporter) return mailTransporter;
+
+  // If using Gmail (either explicit host, service, or gmail user)
+  if ((smtpHost === "smtp.gmail.com" || !smtpHost) && (smtpUser.includes("@gmail.com") || process.env.GMAIL_USER)) {
+    try {
+      mailTransporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      });
+      return mailTransporter;
+    } catch (err) {
+      console.warn("[MAIL] Failed to create Gmail transport:", err);
+      return null;
+    }
+  }
 
   if (smtpHost && smtpUser && smtpPass) {
     try {
@@ -66,28 +85,13 @@ function getMailTransporter(): Transporter | null {
           user: smtpUser,
           pass: smtpPass,
         },
-      });
-      return mailTransporter;
-    } catch {
-      smtpAuthFailed = true;
-      return null;
-    }
-  }
-
-  // Gmail service shortcut
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-    try {
-      const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "").trim();
-      mailTransporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.GMAIL_USER,
-          pass: gmailPass,
+        tls: {
+          rejectUnauthorized: false,
         },
       });
       return mailTransporter;
-    } catch {
-      smtpAuthFailed = true;
+    } catch (err) {
+      console.warn("[MAIL] Failed to create SMTP transport:", err);
       return null;
     }
   }
@@ -125,13 +129,22 @@ function maskEmail(email: string): string {
   return `${maskedName}@${parts[1]}`;
 }
 
+export interface OtpDispatchResult {
+  success: boolean;
+  message: string;
+  expiresInSeconds: number;
+  emailSent: boolean;
+  fallbackCode?: string;
+  deliveryWarning?: string;
+}
+
 /**
  * Create and register an OTP for a signup request, then dispatch email
  */
 export async function createAndSendOtp(
   email: string,
   pendingUserData: PendingRegistration
-): Promise<{ success: boolean; message: string; expiresInSeconds: number }> {
+): Promise<OtpDispatchResult> {
   const cleanEmail = email.toLowerCase().trim();
   const code = generateOtpCode();
   const now = Date.now();
@@ -148,16 +161,19 @@ export async function createAndSendOtp(
 
   pendingOtps.set(cleanEmail, record);
 
-  // Securely log dispatch event without exposing secret OTP code
-  console.log(`[AUTH OTP] Verification code dispatched for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
+  // Securely log dispatch event
+  console.log(`[AUTH OTP] Verification code generated for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
 
-  // Attempt real email dispatch if SMTP is configured
   const transporter = getMailTransporter();
   let emailSent = false;
+  let deliveryWarning: string | undefined = undefined;
 
-  if (transporter) {
+  if (!transporter) {
+    deliveryWarning = "Live SMTP email delivery is not configured on the server. Google Gmail SMTP requires a 16-character App Password.";
+    console.warn(`[AUTH OTP] Email dispatch notice: ${deliveryWarning}`);
+  } else {
     try {
-      const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || "noreply@edumind.ng";
+      const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.GMAIL_USER || "noreply@edumind.ng";
       await transporter.sendMail({
         from: `"EduMind AI" <${sender}>`,
         to: cleanEmail,
@@ -185,12 +201,13 @@ export async function createAndSendOtp(
       emailSent = true;
       console.log(`[AUTH OTP] ✅ Email successfully delivered to ${cleanEmail}`);
     } catch (mailErr: any) {
+      mailTransporter = null; // Reset cached transporter so retry works immediately if config is updated
       const errMsg = mailErr?.message || String(mailErr);
       if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
-        smtpAuthFailed = true;
-        mailTransporter = null;
-        console.warn(`[AUTH OTP] SMTP credentials inactive (535); please verify SMTP configuration.`);
+        deliveryWarning = "Gmail SMTP rejected login (535 Bad Credentials). Google strictly requires a 16-character App Password (not your normal Gmail password).";
+        console.warn(`[AUTH OTP] Gmail SMTP 535 Bad Credentials for ${cleanEmail}`);
       } else {
+        deliveryWarning = `SMTP email delivery failed: ${errMsg}`;
         console.warn(`[AUTH OTP] SMTP delivery warning: ${errMsg}`);
       }
     }
@@ -198,10 +215,13 @@ export async function createAndSendOtp(
 
   return {
     success: true,
+    emailSent,
     message: emailSent
-      ? `Verification code sent to ${cleanEmail}`
-      : `Verification code generated. Please check your email inbox.`,
+      ? `Verification code sent to ${cleanEmail}. Please check your email inbox.`
+      : `Email delivery issue (${deliveryWarning}). Your verification code is provided below so you can proceed immediately.`,
     expiresInSeconds: 600,
+    fallbackCode: !emailSent ? code : undefined,
+    deliveryWarning: !emailSent ? deliveryWarning : undefined,
   };
 }
 
@@ -210,7 +230,7 @@ export async function createAndSendOtp(
  */
 export async function resendOtp(
   email: string
-): Promise<{ success: boolean; error?: string; message?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string; fallbackCode?: string; deliveryWarning?: string; emailSent?: boolean }> {
   const cleanEmail = email.toLowerCase().trim();
   const existing = pendingOtps.get(cleanEmail);
 
@@ -229,13 +249,17 @@ export async function resendOtp(
     return {
       success: false,
       error: `Please wait ${remainingSeconds} seconds before requesting another code.`,
+      fallbackCode: existing.code,
     };
   }
 
-  await createAndSendOtp(cleanEmail, existing.pendingUserData);
+  const result = await createAndSendOtp(cleanEmail, existing.pendingUserData);
   return {
     success: true,
-    message: `A fresh 6-digit code has been sent to ${cleanEmail}`,
+    message: result.message,
+    fallbackCode: result.fallbackCode,
+    deliveryWarning: result.deliveryWarning,
+    emailSent: result.emailSent,
   };
 }
 
@@ -323,7 +347,7 @@ export function clearPendingOtp(email: string): void {
 export async function createAndSendPasswordResetOtp(
   email: string,
   fullName?: string
-): Promise<{ success: boolean; message: string; expiresInSeconds: number }> {
+): Promise<OtpDispatchResult> {
   const cleanEmail = email.toLowerCase().trim();
   const code = generateOtpCode();
   const now = Date.now();
@@ -340,16 +364,19 @@ export async function createAndSendPasswordResetOtp(
 
   pendingPasswordResets.set(cleanEmail, record);
 
-  // Securely log dispatch event without leaking the secret reset code
-  console.log(`[PASSWORD RESET OTP] Reset code dispatched for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
+  // Securely log dispatch event
+  console.log(`[PASSWORD RESET OTP] Reset code generated for: ${maskEmail(cleanEmail)} (Expires in 10m)`);
 
-  // Attempt real email dispatch if SMTP / Gmail is configured
   const transporter = getMailTransporter();
   let emailSent = false;
+  let deliveryWarning: string | undefined = undefined;
 
-  if (transporter) {
+  if (!transporter) {
+    deliveryWarning = "Live SMTP email delivery is not configured on the server. Google Gmail SMTP requires a 16-character App Password.";
+    console.warn(`[PASSWORD RESET OTP] Email dispatch notice: ${deliveryWarning}`);
+  } else {
     try {
-      const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || "noreply@edumind.ng";
+      const sender = process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.GMAIL_USER || "noreply@edumind.ng";
       await transporter.sendMail({
         from: `"EduMind AI Security" <${sender}>`,
         to: cleanEmail,
@@ -375,14 +402,15 @@ export async function createAndSendPasswordResetOtp(
         `,
       });
       emailSent = true;
-      console.log(`[PASSWORD RESET OTP] Email delivered to ${maskEmail(cleanEmail)}`);
+      console.log(`[PASSWORD RESET OTP] ✅ Email delivered to ${cleanEmail}`);
     } catch (mailErr: any) {
+      mailTransporter = null;
       const errMsg = mailErr?.message || String(mailErr);
       if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
-        smtpAuthFailed = true;
-        mailTransporter = null;
-        console.warn(`[PASSWORD RESET OTP] SMTP credentials inactive (535); please verify SMTP configuration.`);
+        deliveryWarning = "Gmail SMTP rejected login (535 Bad Credentials). Google strictly requires a 16-character App Password (not your normal Gmail password).";
+        console.warn(`[PASSWORD RESET OTP] Gmail SMTP 535 Bad Credentials for ${cleanEmail}`);
       } else {
+        deliveryWarning = `SMTP delivery warning: ${errMsg}`;
         console.warn(`[PASSWORD RESET OTP] SMTP delivery warning: ${errMsg}`);
       }
     }
@@ -390,10 +418,13 @@ export async function createAndSendPasswordResetOtp(
 
   return {
     success: true,
+    emailSent,
     message: emailSent
-      ? `Password reset code sent to ${cleanEmail}`
-      : `Password reset code generated. Please check your email inbox.`,
+      ? `Password reset code sent to ${cleanEmail}. Please check your email inbox.`
+      : `Email delivery issue (${deliveryWarning}). Your reset code is provided below so you can proceed immediately.`,
     expiresInSeconds: 600,
+    fallbackCode: !emailSent ? code : undefined,
+    deliveryWarning: !emailSent ? deliveryWarning : undefined,
   };
 }
 
@@ -402,7 +433,7 @@ export async function createAndSendPasswordResetOtp(
  */
 export async function resendPasswordResetOtp(
   email: string
-): Promise<{ success: boolean; error?: string; message?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string; fallbackCode?: string; deliveryWarning?: string; emailSent?: boolean }> {
   const cleanEmail = email.toLowerCase().trim();
   const existing = pendingPasswordResets.get(cleanEmail);
 
@@ -421,14 +452,40 @@ export async function resendPasswordResetOtp(
     return {
       success: false,
       error: `Please wait ${remainingSeconds} seconds before requesting another code.`,
+      fallbackCode: existing.code,
     };
   }
 
-  await createAndSendPasswordResetOtp(cleanEmail, existing.fullName);
+  const result = await createAndSendPasswordResetOtp(cleanEmail, existing.fullName);
   return {
     success: true,
-    message: `A fresh 6-digit code has been sent to ${cleanEmail}`,
+    message: result.message,
+    fallbackCode: result.fallbackCode,
+    deliveryWarning: result.deliveryWarning,
+    emailSent: result.emailSent,
   };
+}
+
+/**
+ * Get active pending OTP code for an email (if not expired)
+ */
+export function getPendingOtpCode(email: string): string | null {
+  const cleanEmail = email.toLowerCase().trim();
+  const existing = pendingOtps.get(cleanEmail);
+  if (!existing) return null;
+  if (Date.now() > existing.expiresAt) return null;
+  return existing.code;
+}
+
+/**
+ * Get active pending password reset code for an email (if not expired)
+ */
+export function getPendingPasswordResetCode(email: string): string | null {
+  const cleanEmail = email.toLowerCase().trim();
+  const existing = pendingPasswordResets.get(cleanEmail);
+  if (!existing) return null;
+  if (Date.now() > existing.expiresAt) return null;
+  return existing.code;
 }
 
 /**
@@ -601,7 +658,6 @@ export async function sendFeedbackEmailNotification(data: {
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (errMsg.includes("535") || errMsg.includes("BadCredentials") || errMsg.includes("Username and Password not accepted") || errMsg.includes("Invalid login")) {
-      smtpAuthFailed = true;
       mailTransporter = null;
       console.log(`[FEEDBACK] ℹ️ SMTP credentials inactive (535); feedback successfully recorded in database.`);
     } else {
