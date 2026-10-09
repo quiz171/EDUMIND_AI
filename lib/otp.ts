@@ -49,7 +49,15 @@ function getMailTransporter(): Transporter | null {
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
   const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER;
-  const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+  const isGmailTransport =
+    (smtpHost?.trim().toLowerCase() === "smtp.gmail.com" || !smtpHost) &&
+    (smtpUser?.toLowerCase().endsWith("@gmail.com") || Boolean(process.env.GMAIL_USER));
+  const rawPass =
+    (isGmailTransport ? process.env.GMAIL_APP_PASSWORD : undefined) ||
+    process.env.SMTP_PASS ||
+    process.env.EMAIL_PASS ||
+    process.env.SMTP_PASSWORD ||
+    process.env.GMAIL_APP_PASSWORD;
   const smtpPass = rawPass ? rawPass.replace(/\s+/g, "").trim() : "";
 
   if (!smtpUser || !smtpPass) {
@@ -59,7 +67,7 @@ function getMailTransporter(): Transporter | null {
   if (mailTransporter) return mailTransporter;
 
   // If using Gmail (either explicit host, service, or gmail user)
-  if ((smtpHost === "smtp.gmail.com" || !smtpHost) && (smtpUser.includes("@gmail.com") || process.env.GMAIL_USER)) {
+  if (isGmailTransport) {
     try {
       mailTransporter = nodemailer.createTransport({
         service: "gmail",
